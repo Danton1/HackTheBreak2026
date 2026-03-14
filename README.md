@@ -1,71 +1,119 @@
-# securelens README
+# SecureLens
 
-This is the README for your extension "securelens". After writing up a brief description, we recommend including the following sections.
+SecureLens is a VS Code extension MVP that runs [Semgrep](https://semgrep.dev/) locally and shows findings inside VS Code.
+
+This project is intentionally scoped for a hackathon MVP:
+
+- no AI features
+- no backend
+- no auth
+- no cloud services
+- local Semgrep CLI only
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- `SecureLens: Scan Current File`
+- `SecureLens: Scan Workspace`
+- findings shown as VS Code diagnostics
+- raw scan logs shown in the `SecureLens` output channel
+- a lightweight `SecureLens Findings` tree view for quick navigation
 
-For example if there is an image subfolder under your extension project workspace:
+## Prerequisites
 
-\!\[feature X\]\(images/feature-x.png\)
+1. Install Node.js 18+ and npm
+2. Install Semgrep so `semgrep --version` works in your terminal
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+Examples:
 
-## Requirements
+```bash
+pip install semgrep
+semgrep --version
+```
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+SecureLens checks Semgrep before every scan and shows a friendly error if it is missing from `PATH`.
 
-## Extension Settings
+## Setup
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+From the project root:
 
-For example:
+```bash
+npm install
+npm run compile
+```
 
-This extension contributes the following settings:
+## Run the extension
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+1. Open [C:\Projects\HackTheBreak2026](/C:/Projects/HackTheBreak2026) in VS Code
+2. Press `F5`
+3. In the Extension Development Host window, open a file or open a folder/workspace
+4. Open the Command Palette with `Ctrl+Shift+P` on Windows or `Cmd+Shift+P` on macOS
+5. Run one of the SecureLens commands
 
-## Known Issues
+## Commands
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+- `SecureLens: Scan Current File`
+  - scans the active file only
+  - clears old diagnostics for that file
+  - reapplies new diagnostics for returned findings
+- `SecureLens: Scan Workspace`
+  - scans all open workspace folders
+  - clears existing SecureLens diagnostics first
+  - reapplies diagnostics for all returned findings
 
-## Release Notes
+## What to expect
 
-Users appreciate release notes as you update your extension.
+After a scan, SecureLens updates:
 
-### 1.0.0
+- the Problems panel
+- editor squiggles
+- the `SecureLens` output channel
+- the `SecureLens Findings` activity bar view
 
-Initial release of ...
+Clicking a finding in the tree view opens the file and jumps to the matching line.
 
-### 1.0.1
+## Demo file
 
-Fixed issue #.
+Open [samples/vulnerable-demo.js](/C:/Projects/HackTheBreak2026/samples/vulnerable-demo.js) and run `SecureLens: Scan Current File` for a quick demo.
 
-### 1.1.0
+## Bundled MVP rules
 
-Added features X, Y, and Z.
+The bundled Semgrep rules are intentionally small and predictable:
 
----
+- SQL string concatenation
+- unsafe `innerHTML`
+- dynamic `child_process.exec`
+- `eval(...)`
+- unsafe Python YAML loading
+- unsafe Python pickle deserialization
+- obvious hardcoded password-style assignments
 
-## Following extension guidelines
+Using a bundled rules file keeps the demo stable and avoids noisy `--config auto` results.
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+## Project structure
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+```text
+src/
+  extension.ts
+  models/
+    Finding.ts
+  services/
+    DiagnosticsService.ts
+    FindingMapper.ts
+    SemgrepService.ts
+  views/
+    FindingsTreeProvider.ts
+rules/
+  securelens-mvp.yml
+samples/
+  vulnerable-demo.js
+```
 
-## Working with Markdown
+## Future extension points
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+The current design keeps Semgrep execution separate from the VS Code UI so later work can add:
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+- finding explanation providers
+- remediation suggestion providers
+- optional AI provider abstractions
 
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+The clean next step is a post-scan enrichment layer that reads `Finding` objects and adds extra guidance without changing the scan pipeline.

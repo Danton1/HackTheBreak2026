@@ -1,40 +1,68 @@
 {
   "name": "securelens",
   "displayName": "SecureLens",
-  "description": "",
+  "description": "Scan the current file or workspace with Semgrep and surface findings inside VS Code.",
   "version": "0.0.1",
+  "publisher": "hackthebreak2026",
+  "license": "MIT",
   "engines": {
-    "vscode": "^1.110.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Linters"
   ],
-  "activationEvents": [],
-  "main": "./out/extension.js",
+  "activationEvents": [
+    "onCommand:securelens.scanCurrentFile",
+    "onCommand:securelens.scanWorkspace",
+    "onCommand:securelens.openFinding",
+    "onView:securelens.findings"
+  ],
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "securelens.helloWorld",
-        "title": "Hello World"
+        "command": "securelens.scanCurrentFile",
+        "title": "SecureLens: Scan Current File",
+        "category": "SecureLens"
+      },
+      {
+        "command": "securelens.scanWorkspace",
+        "title": "SecureLens: Scan Workspace",
+        "category": "SecureLens"
+      },
+      {
+        "command": "securelens.openFinding",
+        "title": "SecureLens: Open Finding",
+        "category": "SecureLens"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "securelens",
+          "title": "SecureLens",
+          "icon": "resources/securelens.svg"
+        }
+      ]
+    },
+    "views": {
+      "securelens": [
+        {
+          "id": "securelens.findings",
+          "name": "SecureLens Findings"
+        }
+      ]
+    }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {
-    "@types/vscode": "^1.110.0",
-    "@types/mocha": "^10.0.10",
-    "@types/node": "22.x",
-    "typescript-eslint": "^8.56.1",
-    "eslint": "^9.39.3",
-    "typescript": "^5.9.3",
-    "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@types/node": "^22.13.14",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.8.2"
   }
 }

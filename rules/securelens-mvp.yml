@@ -1,0 +1,79 @@
+rules:
+  - id: securelens.js.sql-string-concat
+    message: Avoid building SQL queries by concatenating strings.
+    severity: WARNING
+    languages: [javascript, typescript]
+    metadata:
+      shortDescription: String-built SQL queries are prone to SQL injection.
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query("..." + ...)
+          - pattern: $DB.query(`...${...}...`)
+          - pattern: $DB.execute("..." + ...)
+          - pattern: $SQL = "..." + ...
+          - pattern: $SQL = `...${...}...`
+
+  - id: securelens.js.dangerous-innerhtml
+    message: Avoid assigning dynamic content to innerHTML.
+    severity: WARNING
+    languages: [javascript, typescript]
+    metadata:
+      shortDescription: Untrusted HTML assignment can lead to XSS.
+    patterns:
+      - pattern-either:
+          - pattern: $EL.innerHTML = $VALUE
+          - pattern: document.$METHOD(...).innerHTML = $VALUE
+
+  - id: securelens.js.exec-user-input
+    message: Avoid passing dynamic input into child_process.exec.
+    severity: ERROR
+    languages: [javascript, typescript]
+    metadata:
+      shortDescription: Dynamic shell execution can lead to command injection.
+    pattern: exec($CMD)
+
+  - id: securelens.js.eval-usage
+    message: Avoid using eval with dynamic input.
+    severity: ERROR
+    languages: [javascript, typescript]
+    metadata:
+      shortDescription: eval can execute attacker-controlled code.
+    pattern: eval($CODE)
+
+  - id: securelens.js.hardcoded-password
+    message: Possible hardcoded password or secret detected.
+    severity: WARNING
+    languages: [javascript, typescript]
+    metadata:
+      shortDescription: Hardcoded credentials are risky and easy to leak.
+    pattern-regex: (?i)(password|passwd|api[_-]?key|secret)\s*[:=]\s*["'][^"']{6,}["']
+
+  - id: securelens.py.sql-string-concat
+    message: Avoid building SQL queries by concatenating strings.
+    severity: WARNING
+    languages: [python]
+    metadata:
+      shortDescription: String-built SQL queries are prone to SQL injection.
+    patterns:
+      - pattern-either:
+          - pattern: $CURSOR.execute("..." + ...)
+          - pattern: $CURSOR.execute(f"...{...}...")
+
+  - id: securelens.py.yaml-unsafe-load
+    message: Avoid yaml.load with an unsafe loader.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      shortDescription: Unsafe YAML loading can instantiate attacker-controlled objects.
+    patterns:
+      - pattern-either:
+          - pattern: yaml.load($DATA, Loader=yaml.Loader)
+          - pattern: yaml.load($DATA, Loader=yaml.FullLoader)
+
+  - id: securelens.py.pickle-loads
+    message: Avoid deserializing untrusted data with pickle.loads.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      shortDescription: pickle can execute arbitrary code during deserialization.
+    pattern: pickle.loads($DATA)
