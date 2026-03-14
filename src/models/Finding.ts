@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { Suggestion } from './Suggestion';
 
 export type FindingSeverity = 'ERROR' | 'WARNING' | 'INFO';
 
@@ -14,6 +15,7 @@ export interface Finding {
   endCol: number;
   snippet?: string;
   helpText?: string;
+  suggestions?: Suggestion[];
 }
 
 export function findingToRange(finding: Finding): vscode.Range {

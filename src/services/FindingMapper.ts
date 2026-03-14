@@ -1,5 +1,7 @@
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { Finding, FindingSeverity } from '../models/Finding';
+import { Suggestion } from '../models/Suggestion';
 
 interface SemgrepPosition {
   line?: number;
@@ -35,10 +37,10 @@ export class FindingMapper {
 
     return results
       .filter((result) => result.path && result.check_id && result.extra?.message)
-      .map((result, index) => this.toFinding(result, index, cwd));
+      .map((result) => this.toFinding(result, cwd));
   }
 
-  private toFinding(result: SemgrepResult, index: number, cwd: string): Finding {
+  private toFinding(result: SemgrepResult, cwd: string): Finding {
     const severity = this.mapSeverity(result.extra?.severity);
     const rawPath = result.path ?? '';
     const filePath = path.normalize(path.isAbsolute(rawPath) ? rawPath : path.resolve(cwd, rawPath));
@@ -47,11 +49,13 @@ export class FindingMapper {
     const endLine = result.end?.line ?? startLine;
     const endCol = result.end?.col ?? startCol + 1;
     const shortDescription = result.extra?.metadata?.shortDescription ?? result.extra?.metadata?.short_description;
+    const message = result.extra?.message ?? 'Semgrep finding';
+    const ruleId = result.check_id ?? 'unknown-rule';
 
     return {
-      id: `${result.check_id}:${filePath}:${startLine}:${startCol}:${index}`,
-      ruleId: result.check_id ?? 'unknown-rule',
-      message: result.extra?.message ?? 'Semgrep finding',
+      id: this.makeFindingId(ruleId, filePath, startLine, startCol, message),
+      ruleId,
+      message,
       severity,
       filePath,
       startLine,
@@ -59,8 +63,60 @@ export class FindingMapper {
       endLine,
       endCol,
       snippet: result.extra?.lines,
-      helpText: shortDescription
+      helpText: shortDescription,
+      suggestions: this.buildSuggestions(ruleId, message)
     };
+  }
+
+  private makeFindingId(ruleId: string, filePath: string, startLine: number, startCol: number, message: string): string {
+    const base = `${ruleId}|${filePath}|${startLine}|${startCol}|${message}`;
+    return createHash('sha1').update(base).digest('hex');
+  }
+
+  private buildSuggestions(ruleId: string, message: string): Suggestion[] {
+    const key = `${ruleId} ${message}`.toLowerCase();
+
+    if (key.includes('innerhtml')) {
+      return [
+        {
+          id: `${ruleId}:suggestion:innerhtml`,
+          title: 'Use textContent instead of innerHTML when possible',
+          detail: 'If HTML is required, sanitize untrusted input before rendering.'
+        }
+      ];
+    }
+
+    if (key.includes('sql')) {
+      return [
+        {
+          id: `${ruleId}:suggestion:sql`,
+          title: 'Use parameterized queries',
+          detail: 'Avoid building SQL statements with string concatenation.'
+        }
+      ];
+    }
+
+    if (key.includes('exec') || key.includes('command')) {
+      return [
+        {
+          id: `${ruleId}:suggestion:exec`,
+          title: 'Avoid shell command construction from input',
+          detail: 'Use safe APIs, allowlists, and strict input validation.'
+        }
+      ];
+    }
+
+    if (key.includes('secret') || key.includes('password') || key.includes('key')) {
+      return [
+        {
+          id: `${ruleId}:suggestion:secret`,
+          title: 'Move secrets to environment variables',
+          detail: 'Keep credentials out of source code and rotate exposed values.'
+        }
+      ];
+    }
+
+    return [];
   }
 
   private mapSeverity(value?: string): FindingSeverity {

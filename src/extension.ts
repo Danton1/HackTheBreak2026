@@ -3,60 +3,102 @@ import * as vscode from 'vscode';
 import { Finding, findingToRange } from './models/Finding';
 import { DiagnosticsService } from './services/DiagnosticsService';
 import { FindingMapper } from './services/FindingMapper';
+import { FindingsStore } from './services/FindingsStore';
 import { SemgrepService } from './services/SemgrepService';
+import { ActionsTreeProvider } from './views/ActionsTreeProvider';
 import { FindingsTreeProvider } from './views/FindingsTreeProvider';
+import { SuggestionsTreeProvider } from './views/SuggestionsTreeProvider';
+
+interface ScanDependencies {
+  outputChannel: vscode.OutputChannel;
+  semgrepService: SemgrepService;
+  findingMapper: FindingMapper;
+  findingsStore: FindingsStore;
+}
 
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel('SecureLens');
   const diagnosticsService = new DiagnosticsService();
   const semgrepService = new SemgrepService(context.extensionPath);
   const findingMapper = new FindingMapper();
-  const findingsTreeProvider = new FindingsTreeProvider();
+  const findingsStore = new FindingsStore();
 
-  const treeView = vscode.window.createTreeView('securelens.findings', {
+  const actionsTreeProvider = new ActionsTreeProvider();
+  const findingsTreeProvider = new FindingsTreeProvider();
+  const suggestionsTreeProvider = new SuggestionsTreeProvider();
+
+  const actionsTreeView = vscode.window.createTreeView('securelens.actionsView', {
+    treeDataProvider: actionsTreeProvider,
+    showCollapseAll: false
+  });
+
+  const findingsTreeView = vscode.window.createTreeView('securelens.findingsView', {
     treeDataProvider: findingsTreeProvider,
     showCollapseAll: false
   });
 
-  context.subscriptions.push(
+  const suggestionsTreeView = vscode.window.createTreeView('securelens.suggestionsView', {
+    treeDataProvider: suggestionsTreeProvider,
+    showCollapseAll: false
+  });
+
+  const syncUiFromStore = (): void => {
+    const activeFindings = findingsStore.getActiveFindings();
+    diagnosticsService.applyFindings(activeFindings);
+    findingsTreeProvider.setFindings(activeFindings);
+    suggestionsTreeProvider.setFindings(activeFindings);
+  };
+
+  const registerCommand = (command: string, handler: (...args: any[]) => any): vscode.Disposable => {
+    return vscode.commands.registerCommand(command, handler);
+  };
+
+  const subscriptions: vscode.Disposable[] = [
     outputChannel,
     diagnosticsService,
+    findingsStore,
+    actionsTreeProvider,
     findingsTreeProvider,
-    treeView,
-    vscode.commands.registerCommand('securelens.scanCurrentFile', async () => {
+    suggestionsTreeProvider,
+    actionsTreeView,
+    findingsTreeView,
+    suggestionsTreeView,
+    findingsStore.onDidChange(syncUiFromStore),
+    registerCommand('securelens.scanCurrentFile', async () => {
       await scanCurrentFile({
         outputChannel,
-        diagnosticsService,
         semgrepService,
         findingMapper,
-        findingsTreeProvider
+        findingsStore
       });
     }),
-    vscode.commands.registerCommand('securelens.scanWorkspace', async () => {
+    registerCommand('securelens.scanWorkspace', async () => {
       await scanWorkspace({
         outputChannel,
-        diagnosticsService,
         semgrepService,
         findingMapper,
-        findingsTreeProvider
+        findingsStore
       });
     }),
-    vscode.commands.registerCommand('securelens.openFinding', async (finding: Finding) => {
+    registerCommand('securelens.openFinding', async (finding: Finding) => {
       await openFinding(finding);
+    }),
+    registerCommand('securelens.dismissFinding', (arg: unknown) => {
+      const findingId = extractFindingId(arg);
+      if (!findingId) {
+        return;
+      }
+
+      findingsStore.dismissFinding(findingId);
     })
-  );
+  ];
+
+  context.subscriptions.push(...subscriptions);
+  syncUiFromStore();
 }
 
 export function deactivate(): void {
   // VS Code disposes subscriptions registered during activation.
-}
-
-interface ScanDependencies {
-  outputChannel: vscode.OutputChannel;
-  diagnosticsService: DiagnosticsService;
-  semgrepService: SemgrepService;
-  findingMapper: FindingMapper;
-  findingsTreeProvider: FindingsTreeProvider;
 }
 
 async function scanCurrentFile(deps: ScanDependencies): Promise<void> {
@@ -67,11 +109,7 @@ async function scanCurrentFile(deps: ScanDependencies): Promise<void> {
     return;
   }
 
-  const fileUri = editor.document.uri;
-  const filePath = fileUri.fsPath;
-
-  deps.diagnosticsService.clearFile(fileUri);
-  deps.findingsTreeProvider.setFindings([]);
+  const filePath = editor.document.uri.fsPath;
 
   await runScan(
     {
@@ -79,7 +117,10 @@ async function scanCurrentFile(deps: ScanDependencies): Promise<void> {
       targets: [filePath],
       cwd: path.dirname(filePath)
     },
-    deps
+    deps,
+    (findings) => {
+      deps.findingsStore.replaceForFile(filePath, findings);
+    }
   );
 }
 
@@ -93,16 +134,16 @@ async function scanWorkspace(deps: ScanDependencies): Promise<void> {
 
   const targets = workspaceFolders.map((folder) => folder.uri.fsPath);
 
-  deps.diagnosticsService.clearAll();
-  deps.findingsTreeProvider.setFindings([]);
-
   await runScan(
     {
       kind: 'workspace',
       targets,
       cwd: workspaceFolders[0].uri.fsPath
     },
-    deps
+    deps,
+    (findings) => {
+      deps.findingsStore.replaceAll(findings);
+    }
   );
 }
 
@@ -112,7 +153,8 @@ async function runScan(
     targets: string[];
     cwd: string;
   },
-  deps: ScanDependencies
+  deps: ScanDependencies,
+  onFindings: (findings: Finding[]) => void
 ): Promise<void> {
   const { outputChannel } = deps;
   outputChannel.show(true);
@@ -131,7 +173,7 @@ async function runScan(
     });
 
     if (scanResult.stderr.trim()) {
-      outputChannel.appendLine('[SecureLens] Semgrep stderr:');
+      outputChannel.appendLine('[SecureLens] Semgrep Error:');
       outputChannel.appendLine(scanResult.stderr.trim());
     }
 
@@ -144,8 +186,7 @@ async function runScan(
       throw new Error(`SecureLens could not parse Semgrep JSON output: ${toErrorMessage(error)}`);
     }
 
-    deps.diagnosticsService.applyFindings(findings);
-    deps.findingsTreeProvider.setFindings(findings);
+    onFindings(findings);
 
     const summary = `SecureLens found ${findings.length} issue${findings.length === 1 ? '' : 's'}`;
     outputChannel.appendLine(`[SecureLens] ${summary}`);
@@ -178,6 +219,30 @@ async function openFinding(finding: Finding): Promise<void> {
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 }
 
+function extractFindingId(arg: unknown): string | undefined {
+  if (!arg) {
+    return undefined;
+  }
+
+  if (typeof arg === 'string') {
+    return arg;
+  }
+
+  if (typeof arg === 'object') {
+    const maybeFinding = arg as { id?: unknown; finding?: { id?: unknown } };
+
+    if (typeof maybeFinding.id === 'string') {
+      return maybeFinding.id;
+    }
+
+    if (maybeFinding.finding && typeof maybeFinding.finding.id === 'string') {
+      return maybeFinding.finding.id;
+    }
+  }
+
+  return undefined;
+}
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -185,3 +250,4 @@ function toErrorMessage(error: unknown): string {
 
   return String(error);
 }
+

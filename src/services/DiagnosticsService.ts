@@ -8,18 +8,6 @@ export class DiagnosticsService {
     this.collection = vscode.languages.createDiagnosticCollection('securelens');
   }
 
-  public getCollection(): vscode.DiagnosticCollection {
-    return this.collection;
-  }
-
-  public clearAll(): void {
-    this.collection.clear();
-  }
-
-  public clearFile(uri: vscode.Uri): void {
-    this.collection.delete(uri);
-  }
-
   public applyFindings(findings: Finding[]): void {
     const diagnosticsByFile = new Map<string, vscode.Diagnostic[]>();
 
@@ -37,6 +25,7 @@ export class DiagnosticsService {
       diagnosticsByFile.set(finding.filePath, fileDiagnostics);
     }
 
+    this.collection.clear();
     for (const [filePath, diagnostics] of diagnosticsByFile.entries()) {
       this.collection.set(vscode.Uri.file(filePath), diagnostics);
     }

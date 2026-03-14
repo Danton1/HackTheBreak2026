@@ -16,7 +16,10 @@
     "onCommand:securelens.scanCurrentFile",
     "onCommand:securelens.scanWorkspace",
     "onCommand:securelens.openFinding",
-    "onView:securelens.findings"
+    "onCommand:securelens.dismissFinding",
+    "onView:securelens.actionsView",
+    "onView:securelens.findingsView",
+    "onView:securelens.suggestionsView"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -24,17 +27,25 @@
       {
         "command": "securelens.scanCurrentFile",
         "title": "SecureLens: Scan Current File",
-        "category": "SecureLens"
+        "category": "SecureLens",
+        "icon": "$(file-code)"
       },
       {
         "command": "securelens.scanWorkspace",
         "title": "SecureLens: Scan Workspace",
-        "category": "SecureLens"
+        "category": "SecureLens",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "securelens.openFinding",
         "title": "SecureLens: Open Finding",
         "category": "SecureLens"
+      },
+      {
+        "command": "securelens.dismissFinding",
+        "title": "SecureLens: Dismiss Finding",
+        "category": "SecureLens",
+        "icon": "$(close)"
       }
     ],
     "viewsContainers": {
@@ -49,8 +60,52 @@
     "views": {
       "securelens": [
         {
-          "id": "securelens.findings",
-          "name": "SecureLens Findings"
+          "id": "securelens.actionsView",
+          "name": "Actions"
+        },
+        {
+          "id": "securelens.findingsView",
+          "name": "Findings"
+        },
+        {
+          "id": "securelens.suggestionsView",
+          "name": "Suggestions"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "securelens.scanCurrentFile",
+          "when": "view == securelens.actionsView",
+          "group": "navigation"
+        },
+        {
+          "command": "securelens.scanWorkspace",
+          "when": "view == securelens.actionsView",
+          "group": "navigation"
+        },
+        {
+          "command": "securelens.scanCurrentFile",
+          "when": "view == securelens.findingsView",
+          "group": "navigation"
+        },
+        {
+          "command": "securelens.scanWorkspace",
+          "when": "view == securelens.findingsView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "securelens.dismissFinding",
+          "when": "view == securelens.findingsView && viewItem == securelensFinding",
+          "group": "inline"
+        },
+        {
+          "command": "securelens.dismissFinding",
+          "when": "view == securelens.findingsView && viewItem == securelensFinding",
+          "group": "1_modification"
         }
       ]
     }

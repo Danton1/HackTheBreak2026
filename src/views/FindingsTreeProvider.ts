@@ -58,4 +58,3 @@ export class FindingTreeItem extends vscode.TreeItem {
     return `${finding.ruleId}\n${finding.filePath}:${finding.startLine}${description}`;
   }
 }
-
