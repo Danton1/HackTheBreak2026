@@ -44,7 +44,7 @@ const REMEDIATION_MAP: Record<string, Remediation> = {
   },
   'securelens.js.dangerous-innerhtml': {
     category: 'xss-innerhtml',
-    explanation: 'Assigning untrusted data to innerHTML can execute arbitrary script, leading to XSS.',
+    explanation: 'This code treats user input like HTML, which means an attacker could inject script or malicious markup (leading to XSS). If you only want to display text, use textContent instead.',
     detailedSolution: 'Use safe DOM APIs such as textContent when inserting untrusted text. Sanitize any HTML before insertion or avoid innerHTML entirely.',
     suggestedFixes: [
       {
@@ -141,7 +141,7 @@ export class RemediationService {
   
     return merged;
   }
-  
+
   private defaultRemediation(finding: Finding): Remediation {
     const base: Remediation = {
       ...FALLBACK_REMEDIATION,
