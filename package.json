@@ -1,9 +1,9 @@
 {
   "name": "securelens",
   "displayName": "SecureLens",
-  "description": "Scan the files or workspace inside VS Code to be alerted of potential security issues in your code.",
+  "description": "Local-first VS Code security assistant combining Semgrep, custom regex rules, and actionable fixes.",
   "version": "0.0.3",
-  "publisher": "DantonSoares",
+  "publisher": "Danton-Soares",
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
