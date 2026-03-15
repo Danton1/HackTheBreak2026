@@ -15,20 +15,21 @@ export class FindingsStore implements vscode.Disposable {
 
   public replaceAll(findings: Finding[]): void {
     this.findingsById = new Map(findings.map((finding) => [finding.id, finding]));
+    this.pruneDismissedIds();
     this.onDidChangeEmitter.fire();
   }
 
   public getFindingById(findingId: string): Finding | undefined {
     const finding = this.findingsById.get(findingId);
-  
+
     if (!finding) {
       return undefined;
     }
-  
+
     if (this.dismissedIds.has(findingId)) {
       return undefined;
     }
-  
+
     return finding;
   }
 
@@ -45,6 +46,7 @@ export class FindingsStore implements vscode.Disposable {
       this.findingsById.set(finding.id, finding);
     }
 
+    this.pruneDismissedIds();
     this.onDidChangeEmitter.fire();
   }
 
@@ -61,5 +63,10 @@ export class FindingsStore implements vscode.Disposable {
 
   public dispose(): void {
     this.onDidChangeEmitter.dispose();
+  }
+
+  private pruneDismissedIds(): void {
+    const activeIds = new Set(this.findingsById.keys());
+    this.dismissedIds = new Set(Array.from(this.dismissedIds).filter((findingId) => activeIds.has(findingId)));
   }
 }

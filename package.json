@@ -2,7 +2,7 @@
   "name": "securelens",
   "displayName": "SecureLens",
   "description": "Local-first VS Code security assistant combining Semgrep, custom regex rules, and actionable fixes.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "Danton-Soares",
   "license": "MIT",
   "engines": {

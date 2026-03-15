@@ -216,8 +216,9 @@ export class RemediationService {
   private readonly remediations = REMEDIATION_MAP;
 
   public enrichFinding(finding: Finding): Finding {
-    const mapped = this.remediations[finding.ruleId] ?? this.defaultRemediation(finding);
-    const existing = finding.suggestions ?? [];
+    const mappedFromRule = this.remediations[finding.ruleId];
+    const mapped = mappedFromRule ?? this.defaultRemediation(finding);
+    const existing = mappedFromRule ? [] : (finding.suggestions ?? []);
     const suggestions = this.mergeSuggestions(existing, mapped.suggestedFixes);
 
     const remediation: Remediation = {
