@@ -8,6 +8,8 @@
   "engines": {
     "vscode": "^1.90.0"
   },
+  "icon": "resources/securelens.png",
+  "repository": "https://github.com/Danton1/HackTheBreak2026",
   "categories": [
     "Other",
     "Linters"

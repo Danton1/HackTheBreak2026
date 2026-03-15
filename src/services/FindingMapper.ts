@@ -94,7 +94,7 @@ export class FindingMapper {
       return [
         {
           id: `${ruleId}:suggestion:sql`,
-          title: 'Use parameterized queries',
+          title: 'Convert this query to a parameterized query',
           description: 'Avoid building SQL statements with string concatenation. Bind user data separately from the SQL text.',
           detail: 'Avoid building SQL statements with string concatenation. Bind user data separately from the SQL text.',
           kind: 'manual', 
