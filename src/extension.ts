@@ -8,12 +8,15 @@ import { SemgrepService } from './services/SemgrepService';
 import { ActionsTreeProvider } from './views/ActionsTreeProvider';
 import { FindingsTreeProvider } from './views/FindingsTreeProvider';
 import { SuggestionsTreeProvider } from './views/SuggestionsTreeProvider';
+import { RemediationService } from './services/RemediationService';
+import { SecureLensCodeActionProvider } from './providers/SecureLensCodeActionProvider';
 
 interface ScanDependencies {
   outputChannel: vscode.OutputChannel;
   semgrepService: SemgrepService;
   findingMapper: FindingMapper;
   findingsStore: FindingsStore;
+  remediationService: RemediationService;
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -22,6 +25,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const semgrepService = new SemgrepService(context.extensionPath);
   const findingMapper = new FindingMapper();
   const findingsStore = new FindingsStore();
+  const remediationService = new RemediationService();
 
   const actionsTreeProvider = new ActionsTreeProvider();
   const findingsTreeProvider = new FindingsTreeProvider();
@@ -53,6 +57,8 @@ export function activate(context: vscode.ExtensionContext): void {
     return vscode.commands.registerCommand(command, handler);
   };
 
+  const codeActionProvider = new SecureLensCodeActionProvider(findingsStore);
+
   const subscriptions: vscode.Disposable[] = [
     outputChannel,
     diagnosticsService,
@@ -63,26 +69,33 @@ export function activate(context: vscode.ExtensionContext): void {
     actionsTreeView,
     findingsTreeView,
     suggestionsTreeView,
+
     findingsStore.onDidChange(syncUiFromStore),
+
     registerCommand('securelens.scanCurrentFile', async () => {
       await scanCurrentFile({
         outputChannel,
         semgrepService,
         findingMapper,
-        findingsStore
+        findingsStore,
+        remediationService
       });
     }),
+
     registerCommand('securelens.scanWorkspace', async () => {
       await scanWorkspace({
         outputChannel,
         semgrepService,
         findingMapper,
-        findingsStore
+        findingsStore,
+        remediationService
       });
     }),
+
     registerCommand('securelens.openFinding', async (finding: Finding) => {
       await openFinding(finding);
     }),
+
     registerCommand('securelens.dismissFinding', (arg: unknown) => {
       const findingId = extractFindingId(arg);
       if (!findingId) {
@@ -90,7 +103,29 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       findingsStore.dismissFinding(findingId);
-    })
+    }),
+
+    registerCommand('securelens.quickfix.showEvalGuidance', async (finding?: Finding) => {
+      const message =
+        finding?.detailedSolution ??
+        'Avoid eval. Prefer JSON.parse, explicit parsing, or a dispatch table instead of dynamic code execution.';
+
+      await vscode.window.showWarningMessage(message, { modal: true });
+    }),
+
+    vscode.languages.registerCodeActionsProvider(
+      [
+        { scheme: 'file', language: 'javascript' },
+        { scheme: 'file', language: 'typescript' },
+        { scheme: 'file', language: 'javascriptreact' },
+        { scheme: 'file', language: 'typescriptreact' },
+        { scheme: 'file', language: 'python' }
+      ],
+      codeActionProvider,
+      {
+        providedCodeActionKinds: SecureLensCodeActionProvider.providedCodeActionKinds
+      }
+    )
   ];
 
   context.subscriptions.push(...subscriptions);
@@ -186,9 +221,10 @@ async function runScan(
       throw new Error(`SecureLens could not parse Semgrep JSON output: ${toErrorMessage(error)}`);
     }
 
-    onFindings(findings);
+    const enrichedFindings = findings.map((finding) => deps.remediationService.enrichFinding(finding));
+    onFindings(enrichedFindings);
 
-    const summary = `SecureLens found ${findings.length} issue${findings.length === 1 ? '' : 's'}`;
+    const summary = `SecureLens found ${enrichedFindings.length} issue${enrichedFindings.length === 1 ? '' : 's'}`;
     outputChannel.appendLine(`[SecureLens] ${summary}`);
     outputChannel.appendLine('[SecureLens] SecureLens scan completed');
     vscode.window.setStatusBarMessage(summary, 4000);
@@ -250,4 +286,13 @@ function toErrorMessage(error: unknown): string {
 
   return String(error);
 }
+
+
+
+
+
+
+
+
+
 

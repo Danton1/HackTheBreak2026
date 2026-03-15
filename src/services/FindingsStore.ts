@@ -18,6 +18,20 @@ export class FindingsStore implements vscode.Disposable {
     this.onDidChangeEmitter.fire();
   }
 
+  public getFindingById(findingId: string): Finding | undefined {
+    const finding = this.findingsById.get(findingId);
+  
+    if (!finding) {
+      return undefined;
+    }
+  
+    if (this.dismissedIds.has(findingId)) {
+      return undefined;
+    }
+  
+    return finding;
+  }
+
   public replaceForFile(filePath: string, findings: Finding[]): void {
     const normalizedTarget = path.normalize(filePath);
 

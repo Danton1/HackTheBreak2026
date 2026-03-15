@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Suggestion } from './Suggestion';
+import { RemediationAction, Remediation } from './Remediation';
 
 export type FindingSeverity = 'ERROR' | 'WARNING' | 'INFO';
 
@@ -15,7 +15,15 @@ export interface Finding {
   endCol: number;
   snippet?: string;
   helpText?: string;
-  suggestions?: Suggestion[];
+  suggestions?: RemediationAction[];
+  remediation?: Remediation;
+  category?: string;
+  explanation?: string;
+  detailedSolution?: string;
+  canAutoFix?: boolean;
+  autoFixKind?: string;
+  confidence?: Remediation['confidence'];
+  source?: 'semgrep' | 'regex' | 'manual';
 }
 
 export function findingToRange(finding: Finding): vscode.Range {

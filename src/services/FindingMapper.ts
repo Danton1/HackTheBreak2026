@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { createHash } from 'crypto';
 import { Finding, FindingSeverity } from '../models/Finding';
-import { Suggestion } from '../models/Suggestion';
+import { RemediationAction } from '../models/Remediation';
 
 interface SemgrepPosition {
   line?: number;
@@ -64,7 +64,7 @@ export class FindingMapper {
       endCol,
       snippet: result.extra?.lines,
       helpText: shortDescription,
-      suggestions: this.buildSuggestions(ruleId, message)
+      suggestions: this.buildFallbackSuggestions(ruleId, message, shortDescription)
     };
   }
 
@@ -73,50 +73,82 @@ export class FindingMapper {
     return createHash('sha1').update(base).digest('hex');
   }
 
-  private buildSuggestions(ruleId: string, message: string): Suggestion[] {
-    const key = `${ruleId} ${message}`.toLowerCase();
-
-    if (key.includes('innerhtml')) {
+    private buildFallbackSuggestions(ruleId: string, message: string, helpText?: string): RemediationAction[] {
+    const key = `${ruleId} ${message} ${helpText ?? ''}`.toLowerCase();
+  
+    if (this.containsAny(key, ['innerhtml', 'xss'])) {
       return [
         {
           id: `${ruleId}:suggestion:innerhtml`,
-          title: 'Use textContent instead of innerHTML when possible',
-          detail: 'If HTML is required, sanitize untrusted input before rendering.'
+          title: 'Replace innerHTML with textContent when possible',
+          description: 'Use textContent for plain text. If HTML is truly required, sanitize untrusted input before rendering.',
+          detail: 'Use textContent for plain text. If HTML is truly required, sanitize untrusted input before rendering.',
+          kind: 'quickfix',
+          commandId: 'securelens.quickfix.convertInnerHtml',
+          isPreferred: true
         }
       ];
     }
-
-    if (key.includes('sql')) {
+  
+    if (this.containsAny(key, ['sql', 'query', 'select', 'insert', 'update', 'delete'])) {
       return [
         {
           id: `${ruleId}:suggestion:sql`,
           title: 'Use parameterized queries',
-          detail: 'Avoid building SQL statements with string concatenation.'
+          description: 'Avoid building SQL statements with string concatenation. Bind user data separately from the SQL text.',
+          detail: 'Avoid building SQL statements with string concatenation. Bind user data separately from the SQL text.',
+          kind: 'manual', 
+          isPreferred: true
         }
       ];
     }
-
-    if (key.includes('exec') || key.includes('command')) {
+  
+    if (this.containsAny(key, ['exec', 'command', 'spawn', 'shell'])) {
       return [
         {
           id: `${ruleId}:suggestion:exec`,
           title: 'Avoid shell command construction from input',
-          detail: 'Use safe APIs, allowlists, and strict input validation.'
+          description: 'Use safe APIs, argument arrays, allowlists, and strict validation for any user-influenced command values.',
+          detail: 'Use safe APIs, argument arrays, allowlists, and strict validation for any user-influenced command values.',
+          kind: 'manual',
+          isPreferred: true
         }
       ];
     }
-
-    if (key.includes('secret') || key.includes('password') || key.includes('key')) {
+  
+    if (this.containsAny(key, ['eval'])) {
+      return [
+        {
+          id: `${ruleId}:suggestion:eval`,
+          title: 'Avoid eval and use safer alternatives',
+          description: 'Use JSON.parse, explicit parsers, or dispatch tables instead of executing dynamic code.',
+          detail: 'Use JSON.parse, explicit parsers, or dispatch tables instead of executing dynamic code.',
+          kind: 'manual',
+          commandId: 'securelens.quickfix.showEvalGuidance',
+          isPreferred: true
+        }
+      ];
+    }
+  
+    if (this.containsAny(key, ['secret', 'password', 'credential', 'api key', 'apikey', 'token', 'bearer', 'key'])) {
       return [
         {
           id: `${ruleId}:suggestion:secret`,
           title: 'Move secrets to environment variables',
-          detail: 'Keep credentials out of source code and rotate exposed values.'
+          description: 'Keep credentials out of source code. Use process.env or another environment variable mechanism and rotate exposed values.',
+          detail: 'Keep credentials out of source code. Use process.env or another environment variable mechanism and rotate exposed values.',
+          kind: 'quickfix',
+          commandId: 'securelens.quickfix.replaceWithEnv',
+          isPreferred: true
         }
       ];
     }
-
+  
     return [];
+  }
+
+  private containsAny(value: string, needles: string[]): boolean {
+    return needles.some((needle) => value.includes(needle));
   }
 
   private mapSeverity(value?: string): FindingSeverity {

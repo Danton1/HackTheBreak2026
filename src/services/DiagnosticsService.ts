@@ -18,7 +18,7 @@ export class DiagnosticsService {
         this.toDiagnosticSeverity(finding.severity)
       );
       diagnostic.source = 'SecureLens';
-      diagnostic.code = finding.ruleId;
+      diagnostic.code = finding.id;
 
       const fileDiagnostics = diagnosticsByFile.get(finding.filePath) ?? [];
       fileDiagnostics.push(diagnostic);
