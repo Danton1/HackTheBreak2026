@@ -17,6 +17,7 @@
     "onCommand:securelens.scanWorkspace",
     "onCommand:securelens.openFinding",
     "onCommand:securelens.dismissFinding",
+    "onCommand:securelens.quickfix.showEvalGuidance",
     "onView:securelens.actionsView",
     "onView:securelens.findingsView",
     "onView:securelens.suggestionsView"
@@ -46,6 +47,11 @@
         "title": "SecureLens: Dismiss Finding",
         "category": "SecureLens",
         "icon": "$(close)"
+      },
+      {
+        "command": "securelens.quickfix.showEvalGuidance",
+        "title": "SecureLens: Show Safer Eval Guidance",
+        "category": "SecureLens"
       }
     ],
     "viewsContainers": {

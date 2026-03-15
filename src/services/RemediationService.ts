@@ -1,29 +1,47 @@
 import { Finding } from '../models/Finding';
 import { Remediation, RemediationAction } from '../models/Remediation';
 
-const SECRET_SOLUTION =
-  'Move the secret into a .env file or another secure secret manager. Replace the literal with an environment variable reference such as process.env.MY_SECRET. Ensure .env is ignored in git and consider adding a .env.example file to document the required variables.';
-
 const SECRET_EXPLANATION =
-  'This value appears to be a hardcoded credential or secret. Storing secrets directly in source risks accidental exposure through version control, logs, or shared copies.';
+  'This value appears to be a hardcoded credential or secret. Storing secrets directly in source code risks accidental exposure through version control, logs, screenshots, stack traces, or shared repositories.';
+
+const SECRET_SOLUTION =
+  'Move the secret into a .env file or another secure secret manager. Replace the hardcoded literal with an environment variable reference such as process.env.MY_API_KEY. Ensure .env is ignored by version control, and consider committing a .env.example file so teammates know which variables are required without exposing real credentials.';
+
+const SECRET_ACTION: RemediationAction = {
+  id: 'secret.env.quickfix',
+  title: 'Move secret to environment variable (.env)',
+  description: 'Keep credentials out of source code. Replace the hardcoded literal with an environment variable reference and ensure the variable exists in .env.',
+  detail: 'Keep credentials out of source code. Replace the hardcoded literal with an environment variable reference and ensure the variable exists in .env.',
+  kind: 'quickfix',
+  commandId: 'securelens.quickfix.replaceWithEnv',
+  isPreferred: true
+};
 
 const REMEDIATION_MAP: Record<string, Remediation> = {
   'securelens.js.hardcoded-password': {
     category: 'hardcoded-secret',
     explanation: SECRET_EXPLANATION,
     detailedSolution: SECRET_SOLUTION,
-    suggestedFixes: [
-      {
-        id: 'secret.env.placeholder',
-        title: 'Use process.env.SECRET_VALUE',
-        detail: 'Replace the literal with an env var reference like process.env.SECRET_VALUE.',
-        kind: 'quickfix',
-        commandId: 'securelens.quickfix.replaceWithEnv',
-        isPreferred: true
-      }
-    ],
+    suggestedFixes: [SECRET_ACTION],
     canAutoFix: false,
-    autoFixKind: undefined,
+    confidence: 'high',
+    references: ['https://12factor.net/config']
+  },
+  'securelens.regex.secret.assignment': {
+    category: 'hardcoded-secret',
+    explanation: SECRET_EXPLANATION,
+    detailedSolution: SECRET_SOLUTION,
+    suggestedFixes: [SECRET_ACTION],
+    canAutoFix: false,
+    confidence: 'high',
+    references: ['https://12factor.net/config']
+  },
+  'securelens.regex.secret.authorization-bearer': {
+    category: 'hardcoded-secret',
+    explanation: SECRET_EXPLANATION,
+    detailedSolution: SECRET_SOLUTION,
+    suggestedFixes: [SECRET_ACTION],
+    canAutoFix: false,
     confidence: 'high',
     references: ['https://12factor.net/config']
   },
@@ -101,24 +119,23 @@ const FALLBACK_REMEDIATION: Remediation = {
   confidence: 'low'
 };
 
-const ENV_REMOTE_ACTION: RemediationAction = {
-  id: 'secret.env.placeholder',
-  title: 'Replace literal with process.env.SECRET_VALUE',
-  detail: 'Substitute literal declaration with an environment variable reference (process.env.SECRET_VALUE).',
-  kind: 'quickfix',
-  commandId: 'securelens.quickfix.replaceWithEnv',
-  isPreferred: true
-};
-
 export class RemediationService {
   private readonly remediations = REMEDIATION_MAP;
 
   public enrichFinding(finding: Finding): Finding {
-    const remediation = this.remediations[finding.ruleId] ?? this.defaultRemediation(finding);
+    const mapped = this.remediations[finding.ruleId] ?? this.defaultRemediation(finding);
+    const existing = finding.suggestions ?? [];
+    const suggestions = this.mergeSuggestions(existing, mapped.suggestedFixes);
+
+    const remediation: Remediation = {
+      ...mapped,
+      suggestedFixes: suggestions
+    };
+
     return {
       ...finding,
       remediation,
-      suggestions: remediation.suggestedFixes,
+      suggestions,
       category: remediation.category,
       explanation: remediation.explanation,
       detailedSolution: remediation.detailedSolution,
@@ -130,40 +147,36 @@ export class RemediationService {
 
   private mergeSuggestions(existing: RemediationAction[], incoming: RemediationAction[]): RemediationAction[] {
     const seen = new Set<string>();
-    const merged = [...existing, ...incoming].filter((item) => {
+    const merged: RemediationAction[] = [];
+
+    for (const item of [...existing, ...incoming]) {
       const key = item.id || `${item.title}|${item.detail ?? ''}`;
       if (seen.has(key)) {
-        return false;
+        continue;
       }
+
       seen.add(key);
-      return true;
-    });
-  
+      merged.push(item);
+    }
+
     return merged;
   }
 
   private defaultRemediation(finding: Finding): Remediation {
-    const base: Remediation = {
-      ...FALLBACK_REMEDIATION,
-      detailedSolution: FALLBACK_REMEDIATION.detailedSolution,
-      suggestedFixes: [],
-      canAutoFix: false,
-      confidence: 'low'
-    };
+    const text = `${finding.ruleId} ${finding.message}`.toLowerCase();
 
-    if (finding.message.toLowerCase().includes('secret') || finding.message.toLowerCase().includes('credential')) {
+    if (text.includes('secret') || text.includes('credential') || text.includes('password') || text.includes('token')) {
       return {
-        ...base,
         category: 'hardcoded-secret',
         explanation: SECRET_EXPLANATION,
         detailedSolution: SECRET_SOLUTION,
-        suggestedFixes: [ENV_REMOTE_ACTION],
-        confidence: 'medium'
+        suggestedFixes: [SECRET_ACTION],
+        canAutoFix: false,
+        confidence: 'medium',
+        references: ['https://12factor.net/config']
       };
     }
 
-    return base;
+    return FALLBACK_REMEDIATION;
   }
 }
-
-

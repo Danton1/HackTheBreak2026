@@ -1,7 +1,9 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
-import { FindingsStore } from '../services/FindingsStore';
 import { Finding } from '../models/Finding';
 import { RemediationAction } from '../models/Remediation';
+import { FindingsStore } from '../services/FindingsStore';
 
 export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
   public static readonly providedCodeActionKinds = [vscode.CodeActionKind.QuickFix];
@@ -10,29 +12,14 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
 
   provideCodeActions(
     document: vscode.TextDocument,
-    range: vscode.Range,
+    _range: vscode.Range,
     context: vscode.CodeActionContext
   ): vscode.ProviderResult<vscode.CodeAction[]> {
-    const secureLensDiagnostics = context.diagnostics.filter(
-      (diagnostic) => diagnostic.source === 'SecureLens'
-    );
-
+    const secureLensDiagnostics = context.diagnostics.filter((diagnostic) => diagnostic.source === 'SecureLens');
     const actions: vscode.CodeAction[] = [];
 
     for (const diagnostic of secureLensDiagnostics) {
-      let findingId: string | undefined;
-
-      if (typeof diagnostic.code === 'string') {
-        findingId = diagnostic.code;
-      } else if (
-        diagnostic.code &&
-        typeof diagnostic.code === 'object' &&
-        'value' in diagnostic.code &&
-        typeof diagnostic.code.value === 'string'
-      ) {
-        findingId = diagnostic.code.value;
-      }
-
+      const findingId = this.resolveFindingId(diagnostic);
       if (!findingId) {
         continue;
       }
@@ -115,14 +102,14 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     finding: Finding,
     suggestion: RemediationAction
   ): vscode.CodeAction | undefined {
+    if (!['javascript', 'typescript', 'javascriptreact', 'typescriptreact'].includes(document.languageId)) {
+      return undefined;
+    }
+
     const text = document.getText(diagnostic.range);
     const envName = this.deriveEnvName(text, finding);
 
-    // Replace quoted literal after = or :
-    const fixed = text.replace(
-      /([=:]\s*)(["'`])[^"'`]+(\2)/,
-      `$1process.env.${envName}`
-    );
+    const fixed = text.replace(/([=:]\s*)(["'`])[^"'`]+(\2)/, `$1process.env.${envName}`);
 
     if (fixed === text) {
       return undefined;
@@ -130,16 +117,50 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
 
     const action = new vscode.CodeAction(suggestion.title, vscode.CodeActionKind.QuickFix);
     action.diagnostics = [diagnostic];
-    action.edit = new vscode.WorkspaceEdit();
-    action.edit.replace(document.uri, diagnostic.range, fixed);
+
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(document.uri, diagnostic.range, fixed);
+    this.ensureEnvFileContainsVar(edit, document.uri, envName);
+
+    action.edit = edit;
     action.isPreferred = suggestion.isPreferred ?? false;
 
     return action;
   }
 
-  private deriveEnvName(text: string, finding: Finding): string {
-    const variableMatch = text.match(/\b(const|let|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*[=:]/);
-    const raw = variableMatch?.[2] ?? '';
+  private ensureEnvFileContainsVar(edit: vscode.WorkspaceEdit, documentUri: vscode.Uri, envName: string): void {
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
+    if (!workspaceFolder) {
+      return;
+    }
+
+    const envPath = path.join(workspaceFolder.uri.fsPath, '.env');
+    const envUri = vscode.Uri.file(envPath);
+
+    if (!fs.existsSync(envPath)) {
+      edit.createFile(envUri, { ignoreIfExists: true });
+      edit.insert(envUri, new vscode.Position(0, 0), `${envName}=\n`);
+      return;
+    }
+
+    const content = fs.readFileSync(envPath, 'utf8');
+    const alreadyDefined = new RegExp(`^\\s*${this.escapeForRegex(envName)}\\s*=`, 'm').test(content);
+
+    if (alreadyDefined) {
+      return;
+    }
+
+    const lines = content.split('\n');
+    const lastLineIndex = Math.max(lines.length - 1, 0);
+    const lastChar = lines[lastLineIndex]?.length ?? 0;
+    const prefix = content.endsWith('\n') ? '' : '\n';
+
+    edit.insert(envUri, new vscode.Position(lastLineIndex, lastChar), `${prefix}${envName}=\n`);
+  }
+
+  private deriveEnvName(text: string, _finding: Finding): string {
+    const variableMatch = text.match(/\b(?:const|let|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*[=:]/);
+    const raw = variableMatch?.[1] ?? '';
 
     if (!raw) {
       return 'SECRET_VALUE';
@@ -155,10 +176,36 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
       return 'SECRET_VALUE';
     }
 
-    if (normalized.includes('KEY') || normalized.includes('SECRET') || normalized.includes('TOKEN') || normalized.includes('PASSWORD')) {
+    if (
+      normalized.includes('KEY') ||
+      normalized.includes('SECRET') ||
+      normalized.includes('TOKEN') ||
+      normalized.includes('PASSWORD')
+    ) {
       return normalized;
     }
 
     return `${normalized}_VALUE`;
+  }
+
+  private resolveFindingId(diagnostic: vscode.Diagnostic): string | undefined {
+    if (typeof diagnostic.code === 'string') {
+      return diagnostic.code;
+    }
+
+    if (
+      diagnostic.code &&
+      typeof diagnostic.code === 'object' &&
+      'value' in diagnostic.code &&
+      typeof diagnostic.code.value === 'string'
+    ) {
+      return diagnostic.code.value;
+    }
+
+    return undefined;
+  }
+
+  private escapeForRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 }

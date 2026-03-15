@@ -1,5 +1,3 @@
-// chaos-securelens.js
-
 const apiKey = "abc123-super-secret-key";
 const dbPassword = "myPassword123";
 const bearerToken = "Bearer sk_test_123456789";

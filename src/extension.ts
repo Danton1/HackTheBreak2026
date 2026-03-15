@@ -1,20 +1,22 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Finding, findingToRange } from './models/Finding';
+import { SecureLensCodeActionProvider } from './providers/SecureLensCodeActionProvider';
 import { DiagnosticsService } from './services/DiagnosticsService';
 import { FindingMapper } from './services/FindingMapper';
 import { FindingsStore } from './services/FindingsStore';
+import { RegexRuleService } from './services/RegexRuleService';
+import { RemediationService } from './services/RemediationService';
 import { SemgrepService } from './services/SemgrepService';
 import { ActionsTreeProvider } from './views/ActionsTreeProvider';
 import { FindingsTreeProvider } from './views/FindingsTreeProvider';
 import { SuggestionsTreeProvider } from './views/SuggestionsTreeProvider';
-import { RemediationService } from './services/RemediationService';
-import { SecureLensCodeActionProvider } from './providers/SecureLensCodeActionProvider';
 
 interface ScanDependencies {
   outputChannel: vscode.OutputChannel;
   semgrepService: SemgrepService;
   findingMapper: FindingMapper;
+  regexRuleService: RegexRuleService;
   findingsStore: FindingsStore;
   remediationService: RemediationService;
 }
@@ -24,6 +26,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const diagnosticsService = new DiagnosticsService();
   const semgrepService = new SemgrepService(context.extensionPath);
   const findingMapper = new FindingMapper();
+  const regexRuleService = new RegexRuleService();
   const findingsStore = new FindingsStore();
   const remediationService = new RemediationService();
 
@@ -69,33 +72,30 @@ export function activate(context: vscode.ExtensionContext): void {
     actionsTreeView,
     findingsTreeView,
     suggestionsTreeView,
-
     findingsStore.onDidChange(syncUiFromStore),
-
     registerCommand('securelens.scanCurrentFile', async () => {
       await scanCurrentFile({
         outputChannel,
         semgrepService,
         findingMapper,
+        regexRuleService,
         findingsStore,
         remediationService
       });
     }),
-
     registerCommand('securelens.scanWorkspace', async () => {
       await scanWorkspace({
         outputChannel,
         semgrepService,
         findingMapper,
+        regexRuleService,
         findingsStore,
         remediationService
       });
     }),
-
     registerCommand('securelens.openFinding', async (finding: Finding) => {
       await openFinding(finding);
     }),
-
     registerCommand('securelens.dismissFinding', (arg: unknown) => {
       const findingId = extractFindingId(arg);
       if (!findingId) {
@@ -104,7 +104,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
       findingsStore.dismissFinding(findingId);
     }),
-
     registerCommand('securelens.quickfix.showEvalGuidance', async (finding?: Finding) => {
       const message =
         finding?.detailedSolution ??
@@ -112,7 +111,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
       await vscode.window.showWarningMessage(message, { modal: true });
     }),
-
     vscode.languages.registerCodeActionsProvider(
       [
         { scheme: 'file', language: 'javascript' },
@@ -208,20 +206,23 @@ async function runScan(
     });
 
     if (scanResult.stderr.trim()) {
-      outputChannel.appendLine('[SecureLens] Semgrep Error:');
+      outputChannel.appendLine('[SecureLens] Semgrep stderr:');
       outputChannel.appendLine(scanResult.stderr.trim());
     }
 
-    let findings: Finding[];
+    let semgrepFindings: Finding[];
     try {
-      findings = deps.findingMapper.map(scanResult.rawJson, request.cwd);
+      semgrepFindings = deps.findingMapper.map(scanResult.rawJson, request.cwd);
     } catch (error) {
       outputChannel.appendLine('[SecureLens] Failed to parse Semgrep JSON output.');
       outputChannel.appendLine(scanResult.rawJson);
       throw new Error(`SecureLens could not parse Semgrep JSON output: ${toErrorMessage(error)}`);
     }
 
-    const enrichedFindings = findings.map((finding) => deps.remediationService.enrichFinding(finding));
+    const regexFindings = await deps.regexRuleService.scanTargets(request.targets);
+    const merged = dedupeFindings([...semgrepFindings, ...regexFindings]);
+    const enrichedFindings = dedupeFindings(merged.map((finding) => deps.remediationService.enrichFinding(finding)));
+
     onFindings(enrichedFindings);
 
     const summary = `SecureLens found ${enrichedFindings.length} issue${enrichedFindings.length === 1 ? '' : 's'}`;
@@ -255,6 +256,27 @@ async function openFinding(finding: Finding): Promise<void> {
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 }
 
+function dedupeFindings(findings: Finding[]): Finding[] {
+  const deduped: Finding[] = [];
+  const seen = new Set<string>();
+
+  for (const finding of findings) {
+    const secretKey = finding.category === 'hardcoded-secret'
+      ? `hardcoded-secret|${finding.filePath}|${finding.startLine}|${finding.startCol}`
+      : undefined;
+    const key = secretKey ?? `${finding.ruleId}|${finding.filePath}|${finding.startLine}|${finding.startCol}|${finding.message}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(finding);
+  }
+
+  return deduped;
+}
+
 function extractFindingId(arg: unknown): string | undefined {
   if (!arg) {
     return undefined;
@@ -286,13 +308,5 @@ function toErrorMessage(error: unknown): string {
 
   return String(error);
 }
-
-
-
-
-
-
-
-
 
 
