@@ -111,6 +111,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
       findingsStore.dismissFinding(findingId);
     }),
+    registerCommand('securelens.dismissAllFindings', () => {
+      findingsStore.dismissAllFindings();
+    }),
     registerCommand('securelens.quickfix.showEvalGuidance', async (finding?: Finding) => {
       const message =
         finding?.detailedSolution ??

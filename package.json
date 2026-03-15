@@ -2,7 +2,7 @@
   "name": "securelens",
   "displayName": "SecureLens",
   "description": "Local-first VS Code security assistant combining Semgrep, custom regex rules, and actionable fixes.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "Danton-Soares",
   "license": "MIT",
   "engines": {
@@ -19,6 +19,7 @@
     "onCommand:securelens.scanWorkspace",
     "onCommand:securelens.openFinding",
     "onCommand:securelens.dismissFinding",
+    "onCommand:securelens.dismissAllFindings",
     "onCommand:securelens.quickfix.showEvalGuidance",
     "onView:securelens.actionsView",
     "onView:securelens.findingsView",
@@ -49,6 +50,12 @@
         "title": "SecureLens: Dismiss Finding",
         "category": "SecureLens",
         "icon": "$(close)"
+      },
+      {
+        "command": "securelens.dismissAllFindings",
+        "title": "SecureLens: Dismiss All Findings",
+        "category": "SecureLens",
+        "icon": "$(clear-all)"
       },
       {
         "command": "securelens.quickfix.showEvalGuidance",
@@ -102,6 +109,11 @@
           "command": "securelens.scanWorkspace",
           "when": "view == securelens.findingsView",
           "group": "navigation"
+        },
+        {
+          "command": "securelens.dismissAllFindings",
+          "when": "view == securelens.findingsView",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
