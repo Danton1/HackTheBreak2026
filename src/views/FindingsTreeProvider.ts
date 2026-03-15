@@ -53,8 +53,26 @@ export class FindingTreeItem extends vscode.TreeItem {
     this.contextValue = 'securelensFinding';
   }
 
-  private buildTooltip(finding: Finding): string {
-    const description = finding.helpText ? `\n${finding.helpText}` : '';
-    return `${finding.ruleId}\n${finding.filePath}:${finding.startLine}${description}`;
+  private buildTooltip(finding: Finding): vscode.MarkdownString {
+    const tooltip = new vscode.MarkdownString(undefined, true);
+    tooltip.isTrusted = false;
+
+    const location = `${finding.filePath}:${finding.startLine}`;
+    tooltip.appendMarkdown(`**${finding.message}**\n\n`);
+    tooltip.appendMarkdown(`- Rule: \`${finding.ruleId}\`\n`);
+    tooltip.appendMarkdown(`- Severity: ${finding.severity}\n`);
+    tooltip.appendMarkdown(`- Location: ${location}\n`);
+
+    if (finding.explanation) {
+      tooltip.appendMarkdown(`\n**Why this matters**\n${finding.explanation}\n`);
+    } else if (finding.helpText) {
+      tooltip.appendMarkdown(`\n**Why this matters**\n${finding.helpText}\n`);
+    }
+
+    if (finding.detailedSolution) {
+      tooltip.appendMarkdown(`\n**What to do next**\n${finding.detailedSolution}`);
+    }
+
+    return tooltip;
   }
 }
