@@ -67,8 +67,16 @@ class SuggestionTreeItem extends vscode.TreeItem {
     this.contextValue = 'securelensSuggestion';
   }
 
-  private buildTooltip(entry: SuggestionEntry): string {
-    const detail = entry.suggestion.detail ? `\n${entry.suggestion.detail}` : '';
-    return `${entry.suggestion.title}${detail}`;
+  private buildTooltip(entry: SuggestionEntry): vscode.MarkdownString {
+    const tooltip = new vscode.MarkdownString(undefined, true);
+    tooltip.isTrusted = false;
+
+    tooltip.appendMarkdown(`**${entry.suggestion.title}**\n\n`);
+    if (entry.suggestion.detail) {
+      tooltip.appendMarkdown(`${entry.suggestion.detail}\n\n`);
+    }
+
+    tooltip.appendMarkdown(`Linked finding: ${entry.finding.message}`);
+    return tooltip;
   }
 }

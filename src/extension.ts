@@ -1,20 +1,22 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Finding, findingToRange } from './models/Finding';
+import { SecureLensCodeActionProvider } from './providers/SecureLensCodeActionProvider';
 import { DiagnosticsService } from './services/DiagnosticsService';
 import { FindingMapper } from './services/FindingMapper';
 import { FindingsStore } from './services/FindingsStore';
+import { RegexRuleService } from './services/RegexRuleService';
+import { RemediationService } from './services/RemediationService';
 import { SemgrepService } from './services/SemgrepService';
 import { ActionsTreeProvider } from './views/ActionsTreeProvider';
 import { FindingsTreeProvider } from './views/FindingsTreeProvider';
 import { SuggestionsTreeProvider } from './views/SuggestionsTreeProvider';
-import { RemediationService } from './services/RemediationService';
-import { SecureLensCodeActionProvider } from './providers/SecureLensCodeActionProvider';
 
 interface ScanDependencies {
   outputChannel: vscode.OutputChannel;
   semgrepService: SemgrepService;
   findingMapper: FindingMapper;
+  regexRuleService: RegexRuleService;
   findingsStore: FindingsStore;
   remediationService: RemediationService;
 }
@@ -24,6 +26,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const diagnosticsService = new DiagnosticsService();
   const semgrepService = new SemgrepService(context.extensionPath);
   const findingMapper = new FindingMapper();
+  const regexRuleService = new RegexRuleService();
   const findingsStore = new FindingsStore();
   const remediationService = new RemediationService();
 
@@ -69,33 +72,30 @@ export function activate(context: vscode.ExtensionContext): void {
     actionsTreeView,
     findingsTreeView,
     suggestionsTreeView,
-
     findingsStore.onDidChange(syncUiFromStore),
-
     registerCommand('securelens.scanCurrentFile', async () => {
       await scanCurrentFile({
         outputChannel,
         semgrepService,
         findingMapper,
+        regexRuleService,
         findingsStore,
         remediationService
       });
     }),
-
     registerCommand('securelens.scanWorkspace', async () => {
       await scanWorkspace({
         outputChannel,
         semgrepService,
         findingMapper,
+        regexRuleService,
         findingsStore,
         remediationService
       });
     }),
-
     registerCommand('securelens.openFinding', async (finding: Finding) => {
       await openFinding(finding);
     }),
-
     registerCommand('securelens.dismissFinding', (arg: unknown) => {
       const findingId = extractFindingId(arg);
       if (!findingId) {
@@ -104,7 +104,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
       findingsStore.dismissFinding(findingId);
     }),
-
     registerCommand('securelens.quickfix.showEvalGuidance', async (finding?: Finding) => {
       const message =
         finding?.detailedSolution ??
@@ -112,7 +111,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
       await vscode.window.showWarningMessage(message, { modal: true });
     }),
-
     vscode.languages.registerCodeActionsProvider(
       [
         { scheme: 'file', language: 'javascript' },
@@ -208,23 +206,27 @@ async function runScan(
     });
 
     if (scanResult.stderr.trim()) {
-      outputChannel.appendLine('[SecureLens] Semgrep Error:');
+      outputChannel.appendLine('[SecureLens] Semgrep stderr:');
       outputChannel.appendLine(scanResult.stderr.trim());
     }
 
-    let findings: Finding[];
+    let semgrepFindings: Finding[];
     try {
-      findings = deps.findingMapper.map(scanResult.rawJson, request.cwd);
+      semgrepFindings = deps.findingMapper.map(scanResult.rawJson, request.cwd);
     } catch (error) {
       outputChannel.appendLine('[SecureLens] Failed to parse Semgrep JSON output.');
       outputChannel.appendLine(scanResult.rawJson);
       throw new Error(`SecureLens could not parse Semgrep JSON output: ${toErrorMessage(error)}`);
     }
 
-    const enrichedFindings = findings.map((finding) => deps.remediationService.enrichFinding(finding));
-    onFindings(enrichedFindings);
+    const regexFindings = await deps.regexRuleService.scanTargets(request.targets);
+    const merged = [...semgrepFindings, ...regexFindings];
+    const enrichedFindings = merged.map((finding) => deps.remediationService.enrichFinding(finding));
+    const resolvedFindings = dedupeFindings(enrichedFindings);
 
-    const summary = `SecureLens found ${enrichedFindings.length} issue${enrichedFindings.length === 1 ? '' : 's'}`;
+    onFindings(resolvedFindings);
+
+    const summary = `SecureLens found ${resolvedFindings.length} issue${resolvedFindings.length === 1 ? '' : 's'}`;
     outputChannel.appendLine(`[SecureLens] ${summary}`);
     outputChannel.appendLine('[SecureLens] SecureLens scan completed');
     vscode.window.setStatusBarMessage(summary, 4000);
@@ -253,6 +255,93 @@ async function openFinding(finding: Finding): Promise<void> {
 
   editor.selection = new vscode.Selection(range.start, range.end);
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+}
+
+function dedupeFindings(findings: Finding[]): Finding[] {
+  const resolved: Finding[] = [];
+  const keyedIndexes = new Map<string, number>();
+
+  for (const finding of findings) {
+    if (finding.category === 'hardcoded-secret') {
+      const existingIndex = resolved.findIndex(
+        (candidate) => candidate.category === 'hardcoded-secret' && hardcodedSecretFindingsOverlap(candidate, finding)
+      );
+
+      if (existingIndex === -1) {
+        resolved.push(finding);
+        continue;
+      }
+
+      resolved[existingIndex] = resolveDuplicateFinding(resolved[existingIndex], finding);
+      continue;
+    }
+
+    const key = dedupeKeyFor(finding);
+    const existingIndex = keyedIndexes.get(key);
+
+    if (existingIndex === undefined) {
+      resolved.push(finding);
+      keyedIndexes.set(key, resolved.length - 1);
+      continue;
+    }
+
+    resolved[existingIndex] = resolveDuplicateFinding(resolved[existingIndex], finding);
+  }
+
+  return resolved;
+}
+
+function dedupeKeyFor(finding: Finding): string {
+  if (finding.category === 'hardcoded-secret') {
+    return `hardcoded-secret|${finding.filePath}|${finding.startLine}`;
+  }
+
+  return `${finding.ruleId}|${finding.filePath}|${finding.startLine}|${finding.startCol}|${finding.message}`;
+}
+
+function resolveDuplicateFinding(existing: Finding, incoming: Finding): Finding {
+  if (existing.category === 'hardcoded-secret' && incoming.category === 'hardcoded-secret') {
+    if (incoming.source === 'regex' && existing.source !== 'regex') {
+      return incoming;
+    }
+
+    if (existing.source === 'regex' && incoming.source !== 'regex') {
+      return existing;
+    }
+
+    const existingWidth = (existing.endCol - existing.startCol) + (existing.endLine - existing.startLine) * 1000;
+    const incomingWidth = (incoming.endCol - incoming.startCol) + (incoming.endLine - incoming.startLine) * 1000;
+
+    return incomingWidth > existingWidth ? incoming : existing;
+  }
+
+  return existing;
+}
+
+function hardcodedSecretFindingsOverlap(a: Finding, b: Finding): boolean {
+  if (a.filePath !== b.filePath) {
+    return false;
+  }
+
+  if (a.endLine < b.startLine || b.endLine < a.startLine) {
+    return false;
+  }
+
+  const startLine = Math.max(a.startLine, b.startLine);
+  const endLine = Math.min(a.endLine, b.endLine);
+
+  for (let line = startLine; line <= endLine; line += 1) {
+    const aStart = line === a.startLine ? a.startCol : 1;
+    const aEnd = line === a.endLine ? a.endCol : Number.MAX_SAFE_INTEGER;
+    const bStart = line === b.startLine ? b.startCol : 1;
+    const bEnd = line === b.endLine ? b.endCol : Number.MAX_SAFE_INTEGER;
+
+    if (Math.max(aStart, bStart) <= Math.min(aEnd, bEnd)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function extractFindingId(arg: unknown): string | undefined {
@@ -286,13 +375,3 @@ function toErrorMessage(error: unknown): string {
 
   return String(error);
 }
-
-
-
-
-
-
-
-
-
-

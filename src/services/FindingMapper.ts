@@ -134,9 +134,9 @@ export class FindingMapper {
       return [
         {
           id: `${ruleId}:suggestion:secret`,
-          title: 'Move secrets to environment variables',
-          description: 'Keep credentials out of source code. Use process.env or another environment variable mechanism and rotate exposed values.',
-          detail: 'Keep credentials out of source code. Use process.env or another environment variable mechanism and rotate exposed values.',
+          title: 'Move secret to environment variable (.env)',
+          description: 'Keep credentials out of source code. Replace the hardcoded literal with an environment variable reference and ensure the variable exists in .env.',
+          detail: 'Keep credentials out of source code. Replace the hardcoded literal with an environment variable reference and ensure the variable exists in .env.',
           kind: 'quickfix',
           commandId: 'securelens.quickfix.replaceWithEnv',
           isPreferred: true
