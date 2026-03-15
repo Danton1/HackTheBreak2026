@@ -21,6 +21,13 @@ interface ScanDependencies {
   remediationService: RemediationService;
 }
 
+const CODE_ANALYSIS_CATEGORIES = new Set([
+  'sql-injection',
+  'xss-innerhtml',
+  'command-injection',
+  'insecure-eval'
+]);
+
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel('SecureLens');
   const diagnosticsService = new DiagnosticsService();
@@ -257,103 +264,106 @@ async function openFinding(finding: Finding): Promise<void> {
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 }
 
-const OVERLAP_DEDUP_CATEGORIES = new Set([
-  'hardcoded-secret',
-  'sql-injection',
-  'xss-innerhtml',
-  'command-injection',
-  'insecure-eval',
-  'secret-exposure'
-]);
-
 function dedupeFindings(findings: Finding[]): Finding[] {
-  const resolved: Finding[] = [];
-  const keyedIndexes = new Map<string, number>();
+  const result: Finding[] = [];
 
   for (const finding of findings) {
-    const overlapIndex = findOverlapDuplicateIndex(resolved, finding);
-    if (overlapIndex !== -1) {
-      resolved[overlapIndex] = resolveDuplicateFinding(resolved[overlapIndex], finding);
+    const duplicateIndex = result.findIndex((existing) => isDuplicateFinding(existing, finding));
+
+    if (duplicateIndex === -1) {
+      result.push(finding);
       continue;
     }
 
-    const key = dedupeKeyFor(finding);
-    const existingIndex = keyedIndexes.get(key);
-
-    if (existingIndex === undefined) {
-      resolved.push(finding);
-      keyedIndexes.set(key, resolved.length - 1);
-      continue;
-    }
-
-    resolved[existingIndex] = resolveDuplicateFinding(resolved[existingIndex], finding);
+    result[duplicateIndex] = pickPreferredFinding(result[duplicateIndex], finding);
   }
 
-  return resolved;
+  return result;
 }
 
-function findOverlapDuplicateIndex(findings: Finding[], incoming: Finding): number {
-  if (!incoming.category || !OVERLAP_DEDUP_CATEGORIES.has(incoming.category)) {
-    return -1;
-  }
-
-  return findings.findIndex((candidate) => shouldDeduplicateByOverlap(candidate, incoming));
-}
-
-function shouldDeduplicateByOverlap(existing: Finding, incoming: Finding): boolean {
-  if (existing.category !== incoming.category) {
+function isDuplicateFinding(a: Finding, b: Finding): boolean {
+  if (a.filePath !== b.filePath) {
     return false;
   }
 
-  if (existing.filePath !== incoming.filePath) {
+  if (normalizedFindingCategory(a) !== normalizedFindingCategory(b)) {
     return false;
   }
 
-  const sources = new Set([existing.source, incoming.source]);
-  if (!(sources.has('semgrep') && sources.has('regex'))) {
-    return false;
-  }
-
-  return findingsOverlap(existing, incoming);
+  return findingsOverlap(a, b);
 }
 
-function dedupeKeyFor(finding: Finding): string {
-  return `${finding.ruleId}|${finding.filePath}|${finding.startLine}|${finding.startCol}|${finding.endLine}|${finding.endCol}|${finding.message}`;
-}
+function pickPreferredFinding(a: Finding, b: Finding): Finding {
+  const category = normalizedFindingCategory(a);
 
-function resolveDuplicateFinding(existing: Finding, incoming: Finding): Finding {
-  if (existing.category === incoming.category) {
-    if (existing.category === 'hardcoded-secret') {
-      if (incoming.source === 'regex' && existing.source !== 'regex') {
-        return incoming;
-      }
-
-      if (existing.source === 'regex' && incoming.source !== 'regex') {
-        return existing;
-      }
+  if (category === 'hardcoded-secret') {
+    if (isRegexBasedSource(a.source) && !isRegexBasedSource(b.source)) {
+      return a;
     }
 
-    if (incoming.source === 'semgrep' && existing.source !== 'semgrep') {
-      return incoming;
-    }
-
-    if (existing.source === 'semgrep' && incoming.source !== 'semgrep') {
-      return existing;
+    if (isRegexBasedSource(b.source) && !isRegexBasedSource(a.source)) {
+      return b;
     }
   }
 
-  return chooseMoreUsefulFinding(existing, incoming);
-}
+  if (CODE_ANALYSIS_CATEGORIES.has(category)) {
+    if (a.source === 'semgrep' && b.source !== 'semgrep') {
+      return a;
+    }
 
-function chooseMoreUsefulFinding(existing: Finding, incoming: Finding): Finding {
-  const existingWidth = (existing.endCol - existing.startCol) + (existing.endLine - existing.startLine) * 1000;
-  const incomingWidth = (incoming.endCol - incoming.startCol) + (incoming.endLine - incoming.startLine) * 1000;
-
-  if (incomingWidth !== existingWidth) {
-    return incomingWidth > existingWidth ? incoming : existing;
+    if (b.source === 'semgrep' && a.source !== 'semgrep') {
+      return b;
+    }
   }
 
-  return severityRank(incoming.severity) > severityRank(existing.severity) ? incoming : existing;
+  const aConfidence = confidenceRank(a.confidence);
+  const bConfidence = confidenceRank(b.confidence);
+
+  if (aConfidence !== bConfidence) {
+    return bConfidence > aConfidence ? b : a;
+  }
+
+  const aWidth = approximateWidth(a);
+  const bWidth = approximateWidth(b);
+
+  if (aWidth !== bWidth) {
+    return bWidth > aWidth ? b : a;
+  }
+
+  return severityRank(b.severity) > severityRank(a.severity) ? b : a;
+}
+
+function normalizedFindingCategory(finding: Finding): string {
+  if (finding.category && finding.category !== 'generic-security-warning') {
+    return finding.category;
+  }
+
+  return finding.ruleId;
+}
+
+function isRegexBasedSource(source?: Finding['source']): boolean {
+  return source === 'regex' || source === 'custom-regex';
+}
+
+function confidenceRank(confidence?: Finding['confidence']): number {
+  switch (confidence) {
+    case 'high':
+      return 3;
+    case 'medium':
+      return 2;
+    case 'low':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function approximateWidth(finding: Finding): number {
+  if (finding.startLine === finding.endLine) {
+    return Math.max(0, finding.endCol - finding.startCol);
+  }
+
+  return (finding.endLine - finding.startLine) * 1000 + Math.max(0, finding.endCol - finding.startCol);
 }
 
 function severityRank(severity: Finding['severity']): number {
