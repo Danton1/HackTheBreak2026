@@ -105,6 +105,7 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     action.diagnostics = [diagnostic];
     action.edit = new vscode.WorkspaceEdit();
     action.edit.replace(document.uri, diagnostic.range, fixed);
+    action.command = this.createPostFixRescanCommand();
     action.isPreferred = suggestion.isPreferred ?? false;
 
     return action;
@@ -155,9 +156,17 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     action.edit = edit;
+    action.command = this.createPostFixRescanCommand();
     action.isPreferred = suggestion.isPreferred ?? false;
 
     return action;
+  }
+
+  private createPostFixRescanCommand(): vscode.Command {
+    return {
+      title: 'Rescan current file',
+      command: 'securelens.scanCurrentFile'
+    };
   }
 
   private extractAssignmentContext(

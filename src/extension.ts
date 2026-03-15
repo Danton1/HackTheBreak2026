@@ -258,21 +258,37 @@ async function openFinding(finding: Finding): Promise<void> {
 }
 
 function dedupeFindings(findings: Finding[]): Finding[] {
-  const buckets = new Map<string, Finding>();
+  const resolved: Finding[] = [];
+  const keyedIndexes = new Map<string, number>();
 
   for (const finding of findings) {
-    const key = dedupeKeyFor(finding);
-    const existing = buckets.get(key);
+    if (finding.category === 'hardcoded-secret') {
+      const existingIndex = resolved.findIndex(
+        (candidate) => candidate.category === 'hardcoded-secret' && hardcodedSecretFindingsOverlap(candidate, finding)
+      );
 
-    if (!existing) {
-      buckets.set(key, finding);
+      if (existingIndex === -1) {
+        resolved.push(finding);
+        continue;
+      }
+
+      resolved[existingIndex] = resolveDuplicateFinding(resolved[existingIndex], finding);
       continue;
     }
 
-    buckets.set(key, resolveDuplicateFinding(existing, finding));
+    const key = dedupeKeyFor(finding);
+    const existingIndex = keyedIndexes.get(key);
+
+    if (existingIndex === undefined) {
+      resolved.push(finding);
+      keyedIndexes.set(key, resolved.length - 1);
+      continue;
+    }
+
+    resolved[existingIndex] = resolveDuplicateFinding(resolved[existingIndex], finding);
   }
 
-  return Array.from(buckets.values());
+  return resolved;
 }
 
 function dedupeKeyFor(finding: Finding): string {
@@ -300,6 +316,32 @@ function resolveDuplicateFinding(existing: Finding, incoming: Finding): Finding 
   }
 
   return existing;
+}
+
+function hardcodedSecretFindingsOverlap(a: Finding, b: Finding): boolean {
+  if (a.filePath !== b.filePath) {
+    return false;
+  }
+
+  if (a.endLine < b.startLine || b.endLine < a.startLine) {
+    return false;
+  }
+
+  const startLine = Math.max(a.startLine, b.startLine);
+  const endLine = Math.min(a.endLine, b.endLine);
+
+  for (let line = startLine; line <= endLine; line += 1) {
+    const aStart = line === a.startLine ? a.startCol : 1;
+    const aEnd = line === a.endLine ? a.endCol : Number.MAX_SAFE_INTEGER;
+    const bStart = line === b.startLine ? b.startCol : 1;
+    const bEnd = line === b.endLine ? b.endCol : Number.MAX_SAFE_INTEGER;
+
+    if (Math.max(aStart, bStart) <= Math.min(aEnd, bEnd)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function extractFindingId(arg: unknown): string | undefined {

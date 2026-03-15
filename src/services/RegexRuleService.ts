@@ -8,7 +8,13 @@ interface RegexRule {
   name: string;
   message: string;
   description: string;
-  category: 'hardcoded-secret' | 'secret-exposure';
+  category:
+    | 'hardcoded-secret'
+    | 'secret-exposure'
+    | 'xss-innerhtml'
+    | 'insecure-eval'
+    | 'command-injection'
+    | 'sql-injection';
   severity: FindingSeverity;
   supportedExtensions: string[];
 }
@@ -65,11 +71,58 @@ const LOGGING_SINK_RULE: RegexRule = {
   supportedExtensions: ['.js', '.ts', '.jsx', '.tsx', '.py']
 };
 
+const INNER_HTML_RULE: RegexRule = {
+  id: 'securelens.regex.xss.innerhtml',
+  name: 'innerHTML dynamic usage',
+  message: 'Potential XSS: innerHTML used with dynamic content.',
+  description: 'innerHTML can execute or render untrusted markup when fed user-controlled data.',
+  category: 'xss-innerhtml',
+  severity: 'WARNING',
+  supportedExtensions: ['.js', '.ts', '.jsx', '.tsx']
+};
+
+const EVAL_RULE: RegexRule = {
+  id: 'securelens.regex.insecure-eval',
+  name: 'Dynamic code execution',
+  message: 'Dynamic code execution detected.',
+  description: 'eval/new Function can execute attacker-controlled strings.',
+  category: 'insecure-eval',
+  severity: 'WARNING',
+  supportedExtensions: ['.js', '.ts', '.jsx', '.tsx']
+};
+
+const COMMAND_EXEC_RULE: RegexRule = {
+  id: 'securelens.regex.command.exec',
+  name: 'Unsafe command execution',
+  message: 'Potential command injection or unsafe process execution.',
+  description: 'exec/execSync/spawn with shell can execute untrusted command strings.',
+  category: 'command-injection',
+  severity: 'WARNING',
+  supportedExtensions: ['.js', '.ts', '.jsx', '.tsx', '.py']
+};
+
+const SQL_CONCAT_RULE: RegexRule = {
+  id: 'securelens.regex.sql.concat',
+  name: 'SQL query concatenation',
+  message: 'Potential SQL injection: query built with string concatenation.',
+  description: 'SQL built by concatenating variables can allow injection.',
+  category: 'sql-injection',
+  severity: 'WARNING',
+  supportedExtensions: ['.js', '.ts', '.jsx', '.tsx', '.py']
+};
+
 const ASSIGNMENT_REGEX = /\b([A-Za-z_][A-Za-z0-9_]*)\b\s*[:=]\s*(["'`])([^"'`\n]{8,})\2/g;
 const AUTHORIZATION_HEADER_REGEX = /\bAuthorization\b\s*:\s*([A-Za-z_][A-Za-z0-9_]*)/g;
 const QUERYSTRING_SECRET_REGEX =
   /["'`][^"'`\n]*\?(?:[^"'`\n]*?(?:key|token|password|secret)=[^"'`\n]*)["'`]\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)/gi;
 const LOG_CALL_REGEX = /\b(?:console\.(?:log|info|warn|error)|logger\.(?:info|warn|error|debug)|print)\s*\(([^)]*)\)/g;
+const INNER_HTML_REGEX = /\binnerHTML\b\s*=/g;
+const EVAL_REGEX = /\beval\s*\(|\bnew\s+Function\s*\(/g;
+const COMMAND_EXEC_REGEX =
+  /\b(?:child_process\.)?(?:exec|execSync)\s*\(|\brequire\((["'`])child_process\1\)\.(?:exec|execSync|spawn)\s*\(|\bspawn\s*\([^)]*\{[^}]*\bshell\s*:\s*true/gi;
+const SQL_CONCAT_REGEX =
+  /["'`]\s*(?:SELECT|INSERT|UPDATE|DELETE)\b[^"'`\n]*["'`]\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)/gi;
+
 const PLACEHOLDER_PATTERNS = [
   'your_api_key_here',
   'your-token-here',
@@ -199,6 +252,7 @@ export class RegexRuleService {
     }
 
     findings.push(...this.scanSinkUsages(filePath, source));
+    findings.push(...this.scanFallbackRiskyPatterns(filePath, source));
 
     return findings;
   }
@@ -276,6 +330,78 @@ export class RegexRuleService {
             })
           );
         }
+      }
+    }
+
+    return findings;
+  }
+
+  private scanFallbackRiskyPatterns(filePath: string, source: string): Finding[] {
+    const findings: Finding[] = [];
+    const lines = source.split(/\r?\n/);
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const lineNumber = i + 1;
+
+      for (const match of line.matchAll(INNER_HTML_REGEX)) {
+        const matchedText = match[0] ?? 'innerHTML =';
+        findings.push(
+          this.toFinding({
+            rule: INNER_HTML_RULE,
+            filePath,
+            matchedText,
+            startLine: lineNumber,
+            startCol: (match.index ?? 0) + 1,
+            endLine: lineNumber,
+            endCol: (match.index ?? 0) + matchedText.length + 1
+          })
+        );
+      }
+
+      for (const match of line.matchAll(EVAL_REGEX)) {
+        const matchedText = match[0] ?? 'eval(';
+        findings.push(
+          this.toFinding({
+            rule: EVAL_RULE,
+            filePath,
+            matchedText,
+            startLine: lineNumber,
+            startCol: (match.index ?? 0) + 1,
+            endLine: lineNumber,
+            endCol: (match.index ?? 0) + matchedText.length + 1
+          })
+        );
+      }
+
+      for (const match of line.matchAll(COMMAND_EXEC_REGEX)) {
+        const matchedText = match[0] ?? 'exec(';
+        findings.push(
+          this.toFinding({
+            rule: COMMAND_EXEC_RULE,
+            filePath,
+            matchedText,
+            startLine: lineNumber,
+            startCol: (match.index ?? 0) + 1,
+            endLine: lineNumber,
+            endCol: (match.index ?? 0) + matchedText.length + 1
+          })
+        );
+      }
+
+      for (const match of line.matchAll(SQL_CONCAT_REGEX)) {
+        const matchedText = match[0] ?? 'SELECT ... + value';
+        findings.push(
+          this.toFinding({
+            rule: SQL_CONCAT_RULE,
+            filePath,
+            matchedText,
+            startLine: lineNumber,
+            startCol: (match.index ?? 0) + 1,
+            endLine: lineNumber,
+            endCol: (match.index ?? 0) + matchedText.length + 1
+          })
+        );
       }
     }
 

@@ -22,6 +22,22 @@ const SECRET_ACTION: RemediationAction = {
   isPreferred: true
 };
 
+const INNER_HTML_ACTION: RemediationAction = {
+  id: 'innerhtml.to.textcontent',
+  title: 'Switch innerHTML to textContent',
+  detail: 'Use textContent to prevent HTML parsing when only text is needed.',
+  kind: 'quickfix',
+  commandId: 'securelens.quickfix.convertInnerHtml'
+};
+
+const EVAL_GUIDANCE_ACTION: RemediationAction = {
+  id: 'eval.guidance',
+  title: 'Show safer alternative guidance',
+  detail: 'Open remediation guidance about avoiding eval.',
+  kind: 'manual',
+  commandId: 'securelens.quickfix.showEvalGuidance'
+};
+
 const REMEDIATION_MAP: Record<string, Remediation> = {
   'securelens.js.hardcoded-password': {
     category: 'hardcoded-secret',
@@ -89,19 +105,35 @@ const REMEDIATION_MAP: Record<string, Remediation> = {
     canAutoFix: false,
     confidence: 'medium'
   },
+  'securelens.regex.sql.concat': {
+    category: 'sql-injection',
+    explanation: 'Building SQL statements via string concatenation risks SQL injection when user data is embedded.',
+    detailedSolution: 'Switch to parameterized queries or ORM APIs that separate data from SQL syntax. Never inject untrusted input directly into SQL strings.',
+    suggestedFixes: [
+      {
+        id: 'sql.parameterize',
+        title: 'Use parameterized queries',
+        detail: 'Replace string concatenation with parameterized query APIs (e.g., parameter markers with client libraries).',
+        kind: 'manual'
+      }
+    ],
+    canAutoFix: false,
+    confidence: 'medium'
+  },
   'securelens.js.dangerous-innerhtml': {
     category: 'xss-innerhtml',
     explanation: 'This code treats user input like HTML, which means an attacker could inject script or malicious markup (leading to XSS). If you only want to display text, use textContent instead.',
     detailedSolution: 'Use safe DOM APIs such as textContent when inserting untrusted text. Sanitize any HTML before insertion or avoid innerHTML entirely.',
-    suggestedFixes: [
-      {
-        id: 'innerhtml.to.textcontent',
-        title: 'Switch innerHTML to textContent',
-        detail: 'Use textContent to prevent HTML parsing when only text is needed.',
-        kind: 'quickfix',
-        commandId: 'securelens.quickfix.convertInnerHtml'
-      }
-    ],
+    suggestedFixes: [INNER_HTML_ACTION],
+    canAutoFix: true,
+    autoFixKind: 'text-replace',
+    confidence: 'medium'
+  },
+  'securelens.regex.xss.innerhtml': {
+    category: 'xss-innerhtml',
+    explanation: 'This code treats user input like HTML, which means an attacker could inject script or malicious markup (leading to XSS). If you only want to display text, use textContent instead.',
+    detailedSolution: 'Use safe DOM APIs such as textContent when inserting untrusted text. Sanitize any HTML before insertion or avoid innerHTML entirely.',
+    suggestedFixes: [INNER_HTML_ACTION],
     canAutoFix: true,
     autoFixKind: 'text-replace',
     confidence: 'medium'
@@ -121,19 +153,34 @@ const REMEDIATION_MAP: Record<string, Remediation> = {
     canAutoFix: false,
     confidence: 'medium'
   },
+  'securelens.regex.command.exec': {
+    category: 'command-injection',
+    explanation: 'Executing shell commands with user-controlled data can allow arbitrary command execution.',
+    detailedSolution: 'Avoid passing unsanitized input into exec/child_process commands. Prefer safe APIs or strict allowlists.',
+    suggestedFixes: [
+      {
+        id: 'exec.manual-allowlist',
+        title: 'Review exec usage',
+        detail: 'Validate inputs or replace exec with a safer API. Do not interpolate arbitrary user values into shell commands.',
+        kind: 'manual'
+      }
+    ],
+    canAutoFix: false,
+    confidence: 'medium'
+  },
   'securelens.js.eval-usage': {
     category: 'insecure-eval',
     explanation: 'eval can execute attacker-provided code whenever untrusted input reaches it.',
     detailedSolution: 'Avoid eval by parsing or interpreting data manually, or remove the need for dynamic evaluation altogether.',
-    suggestedFixes: [
-      {
-        id: 'eval.guidance',
-        title: 'Show safer alternative guidance',
-        detail: 'Open remediation guidance about avoiding eval.',
-        kind: 'manual',
-        commandId: 'securelens.quickfix.showEvalGuidance'
-      }
-    ],
+    suggestedFixes: [EVAL_GUIDANCE_ACTION],
+    canAutoFix: false,
+    confidence: 'medium'
+  },
+  'securelens.regex.insecure-eval': {
+    category: 'insecure-eval',
+    explanation: 'eval can execute attacker-provided code whenever untrusted input reaches it.',
+    detailedSolution: 'Avoid eval by parsing or interpreting data manually, or remove the need for dynamic evaluation altogether.',
+    suggestedFixes: [EVAL_GUIDANCE_ACTION],
     canAutoFix: false,
     confidence: 'medium'
   }
@@ -203,6 +250,29 @@ export class RemediationService {
         canAutoFix: false,
         confidence: 'medium',
         references: ['https://12factor.net/config']
+      };
+    }
+
+    if (text.includes('innerhtml')) {
+      return {
+        category: 'xss-innerhtml',
+        explanation: 'This code treats user input like HTML, which means an attacker could inject script or malicious markup (leading to XSS). If you only want to display text, use textContent instead.',
+        detailedSolution: 'Use safe DOM APIs such as textContent when inserting untrusted text. Sanitize any HTML before insertion or avoid innerHTML entirely.',
+        suggestedFixes: [INNER_HTML_ACTION],
+        canAutoFix: true,
+        autoFixKind: 'text-replace',
+        confidence: 'medium'
+      };
+    }
+
+    if (text.includes('eval') || text.includes('new function') || text.includes('dynamic code')) {
+      return {
+        category: 'insecure-eval',
+        explanation: 'eval can execute attacker-provided code whenever untrusted input reaches it.',
+        detailedSolution: 'Avoid eval by parsing or interpreting data manually, or remove the need for dynamic evaluation altogether.',
+        suggestedFixes: [EVAL_GUIDANCE_ACTION],
+        canAutoFix: false,
+        confidence: 'medium'
       };
     }
 
