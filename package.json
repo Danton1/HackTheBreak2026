@@ -1,9 +1,9 @@
 {
   "name": "securelens",
   "displayName": "SecureLens",
-  "description": "Scan the current file or workspace with Semgrep and surface findings inside VS Code.",
-  "version": "0.0.1",
-  "publisher": "hackthebreak2026",
+  "description": "Scan the files or workspace inside VS Code to be alerted of potential security issues in your code.",
+  "version": "0.0.3",
+  "publisher": "DantonSoares",
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
@@ -114,6 +114,86 @@
           "group": "1_modification"
         }
       ]
+    },
+    "configuration": {
+      "title": "SecureLens",
+      "properties": {
+        "securelens.rerunScanOnQuickFix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Rerun SecureLens scan automatically after applying a SecureLens quick fix."
+        },
+        "securelens.customRegexRules": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Custom regex security rules to run alongside built-in SecureLens regex checks. Invalid rules are skipped safely.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "pattern",
+              "message"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Stable unique id for this custom rule."
+              },
+              "name": {
+                "type": "string",
+                "description": "Human-friendly rule name shown in finding details."
+              },
+              "pattern": {
+                "type": "string",
+                "description": "JavaScript regex pattern string (without leading/trailing slashes)."
+              },
+              "flags": {
+                "type": "string",
+                "default": "i",
+                "description": "Regex flags, for example \"i\" or \"im\". Global matching is added automatically."
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "ERROR",
+                  "WARNING",
+                  "INFO"
+                ],
+                "default": "WARNING"
+              },
+              "category": {
+                "type": "string",
+                "default": "generic-security-warning"
+              },
+              "message": {
+                "type": "string",
+                "description": "Finding message shown in the tree and diagnostics."
+              },
+              "explanation": {
+                "type": "string",
+                "description": "Optional human-friendly explanation shown in finding details."
+              },
+              "detailedSolution": {
+                "type": "string",
+                "description": "Optional remediation guidance shown in finding details."
+              },
+              "fileExtensions": {
+                "type": "array",
+                "description": "Optional extension filter, for example [\".js\", \".ts\"].",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source": {
+                "type": "string",
+                "default": "custom-regex",
+                "description": "Optional source label. Use \"custom-regex\" (default) or \"regex\"."
+              }
+            }
+          }
+        }
+      }
     }
   },
   "scripts": {

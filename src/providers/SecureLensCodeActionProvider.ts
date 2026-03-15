@@ -115,35 +115,35 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     const gitignorePath = path.join(workspaceRoot, '.gitignore');
     const gitignoreUri = vscode.Uri.file(gitignorePath);
     const envEntry = '.env';
-  
+
     if (!fs.existsSync(gitignorePath)) {
       edit.createFile(gitignoreUri, { ignoreIfExists: true });
       edit.insert(gitignoreUri, new vscode.Position(0, 0), `${envEntry}\n`);
       return;
     }
-  
+
     const content = fs.readFileSync(gitignorePath, 'utf8');
     if (this.gitignoreContainsEntry(content, envEntry)) {
       return;
     }
-  
+
     const lines = content.split('\n');
     const lastLineIndex = Math.max(lines.length - 1, 0);
     const lastChar = lines[lastLineIndex]?.length ?? 0;
     const prefix = content.endsWith('\n') ? '' : '\n';
-  
+
     edit.insert(gitignoreUri, new vscode.Position(lastLineIndex, lastChar), `${prefix}${envEntry}\n`);
   }
-  
+
   private gitignoreContainsEntry(content: string, entry: string): boolean {
     const lines = content.split(/\r?\n/);
-  
+
     return lines.some((line) => {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) {
         return false;
       }
-  
+
       return trimmed === entry;
     });
   }
@@ -201,7 +201,16 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     return action;
   }
 
-  private createPostFixRescanCommand(): vscode.Command {
+  private shouldRerunScanOnQuickFix(): boolean {
+    const config = vscode.workspace.getConfiguration('securelens');
+    return config.get<boolean>('rerunScanOnQuickFix', true);
+  }
+
+  private createPostFixRescanCommand(): vscode.Command | undefined {
+    if (!this.shouldRerunScanOnQuickFix()) {
+      return undefined;
+    }
+
     return {
       title: 'Rescan current file',
       command: 'securelens.scanCurrentFile'

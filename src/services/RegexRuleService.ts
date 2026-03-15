@@ -1,6 +1,7 @@
 import * as path from 'path';
 import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
+import * as vscode from 'vscode';
 import { Finding, FindingSeverity } from '../models/Finding';
 
 interface RegexRule {
@@ -17,6 +18,33 @@ interface RegexRule {
     | 'sql-injection';
   severity: FindingSeverity;
   supportedExtensions: string[];
+}
+
+interface CustomRegexRuleConfig {
+  id?: unknown;
+  name?: unknown;
+  pattern?: unknown;
+  flags?: unknown;
+  severity?: unknown;
+  category?: unknown;
+  message?: unknown;
+  explanation?: unknown;
+  detailedSolution?: unknown;
+  fileExtensions?: unknown;
+  source?: unknown;
+}
+
+interface CompiledCustomRegexRule {
+  id: string;
+  name: string;
+  regex: RegExp;
+  severity: FindingSeverity;
+  category: string;
+  message: string;
+  explanation?: string;
+  detailedSolution?: string;
+  fileExtensions: Set<string>;
+  source: 'regex' | 'custom-regex';
 }
 
 const SUPPORTED_EXTENSIONS = new Set(['.js', '.ts', '.jsx', '.tsx', '.py']);
@@ -152,10 +180,11 @@ const SECRET_NAME_HINTS = [
 export class RegexRuleService {
   public async scanTargets(targets: string[]): Promise<Finding[]> {
     const files = await this.resolveTargetFiles(targets);
+    const customRules = this.loadCustomRegexRules();
     const findings: Finding[] = [];
 
     for (const filePath of files) {
-      const fileFindings = await this.scanFile(filePath);
+      const fileFindings = await this.scanFile(filePath, customRules);
       findings.push(...fileFindings);
     }
 
@@ -216,7 +245,7 @@ export class RegexRuleService {
     return result;
   }
 
-  private async scanFile(filePath: string): Promise<Finding[]> {
+  private async scanFile(filePath: string, customRules: CompiledCustomRegexRule[]): Promise<Finding[]> {
     const extension = path.extname(filePath).toLowerCase();
     if (!SUPPORTED_EXTENSIONS.has(extension)) {
       return [];
@@ -253,6 +282,7 @@ export class RegexRuleService {
 
     findings.push(...this.scanSinkUsages(filePath, source));
     findings.push(...this.scanFallbackRiskyPatterns(filePath, source));
+    findings.push(...this.scanCustomRules(filePath, source, extension, customRules));
 
     return findings;
   }
@@ -408,6 +438,139 @@ export class RegexRuleService {
     return findings;
   }
 
+  private scanCustomRules(
+    filePath: string,
+    source: string,
+    extension: string,
+    customRules: CompiledCustomRegexRule[]
+  ): Finding[] {
+    const findings: Finding[] = [];
+
+    for (const rule of customRules) {
+      if (rule.fileExtensions.size > 0 && !rule.fileExtensions.has(extension)) {
+        continue;
+      }
+
+      rule.regex.lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = rule.regex.exec(source)) !== null) {
+        const matchedText = match[0] ?? '';
+        const startOffset = match.index ?? 0;
+        const location = this.toLineColumn(source, startOffset, Math.max(matchedText.length, 1));
+
+        findings.push(this.toFindingFromCustomRule(rule, filePath, matchedText, location));
+
+        if (matchedText.length === 0) {
+          rule.regex.lastIndex += 1;
+        }
+      }
+    }
+
+    return findings;
+  }
+
+  private loadCustomRegexRules(): CompiledCustomRegexRule[] {
+    const config = vscode.workspace.getConfiguration('securelens');
+    const rawRules = config.get<unknown[]>('customRegexRules', []);
+
+    if (!Array.isArray(rawRules)) {
+      return [];
+    }
+
+    const compiled: CompiledCustomRegexRule[] = [];
+
+    rawRules.forEach((rawRule, index) => {
+      const parsed = this.toCompiledCustomRule(rawRule as CustomRegexRuleConfig, index);
+      if (parsed) {
+        compiled.push(parsed);
+      }
+    });
+
+    return compiled;
+  }
+
+  private toCompiledCustomRule(raw: CustomRegexRuleConfig, index: number): CompiledCustomRegexRule | undefined {
+    if (!raw || typeof raw !== 'object') {
+      return undefined;
+    }
+
+    const pattern = typeof raw.pattern === 'string' ? raw.pattern : '';
+    const message = typeof raw.message === 'string' ? raw.message : '';
+
+    if (!pattern.trim() || !message.trim()) {
+      return undefined;
+    }
+
+    const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `custom.regex.rule.${index + 1}`;
+    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : id;
+    const flags = this.ensureGlobalFlag(typeof raw.flags === 'string' ? raw.flags : '');
+
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern, flags);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[SecureLens] Skipping invalid custom regex rule "${id}": ${reason}`);
+      return undefined;
+    }
+
+    const fileExtensions = this.normalizeCustomFileExtensions(raw.fileExtensions);
+
+    const sourceValue = typeof raw.source === 'string' ? raw.source : 'custom-regex';
+    const source: 'regex' | 'custom-regex' = sourceValue === 'regex' ? 'regex' : 'custom-regex';
+
+    return {
+      id,
+      name,
+      regex,
+      severity: this.toSeverity(raw.severity),
+      category: typeof raw.category === 'string' && raw.category.trim() ? raw.category.trim() : 'generic-security-warning',
+      message: message.trim(),
+      explanation: typeof raw.explanation === 'string' && raw.explanation.trim() ? raw.explanation.trim() : undefined,
+      detailedSolution:
+        typeof raw.detailedSolution === 'string' && raw.detailedSolution.trim() ? raw.detailedSolution.trim() : undefined,
+      fileExtensions,
+      source
+    };
+  }
+
+  private ensureGlobalFlag(flags: string): string {
+    const sanitized = flags.replace(/[^dgimsuvy]/g, '');
+    const unique = Array.from(new Set(sanitized.split(''))).join('');
+
+    if (unique.includes('g')) {
+      return unique;
+    }
+
+    return `${unique}g`;
+  }
+
+  private normalizeCustomFileExtensions(value: unknown): Set<string> {
+    if (!Array.isArray(value)) {
+      return new Set(SUPPORTED_EXTENSIONS);
+    }
+
+    const normalized = value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim().toLowerCase())
+      .filter((item) => item.startsWith('.'));
+
+    if (normalized.length === 0) {
+      return new Set(SUPPORTED_EXTENSIONS);
+    }
+
+    return new Set(normalized);
+  }
+
+  private toSeverity(value: unknown): FindingSeverity {
+    if (value === 'ERROR' || value === 'INFO' || value === 'WARNING') {
+      return value;
+    }
+
+    return 'WARNING';
+  }
+
   private shouldFlag(identifier: string, literal: string): boolean {
     if (!this.isHighSignalLiteral(literal)) {
       return false;
@@ -468,6 +631,33 @@ export class RegexRuleService {
       helpText: params.rule.description,
       source: 'regex',
       category: params.rule.category
+    };
+  }
+
+  private toFindingFromCustomRule(
+    rule: CompiledCustomRegexRule,
+    filePath: string,
+    matchedText: string,
+    location: { startLine: number; startCol: number; endLine: number; endCol: number }
+  ): Finding {
+    const id = this.makeId(rule.id, filePath, location.startLine, location.startCol, rule.message);
+
+    return {
+      id,
+      ruleId: rule.id,
+      message: rule.message,
+      severity: rule.severity,
+      filePath,
+      startLine: location.startLine,
+      startCol: location.startCol,
+      endLine: location.endLine,
+      endCol: location.endCol,
+      snippet: matchedText,
+      helpText: rule.name,
+      source: rule.source,
+      category: rule.category,
+      explanation: rule.explanation,
+      detailedSolution: rule.detailedSolution
     };
   }
 

@@ -222,6 +222,9 @@ export class RemediationService {
 
     const remediation: Remediation = {
       ...mapped,
+      category: finding.category ?? mapped.category,
+      explanation: finding.explanation ?? mapped.explanation,
+      detailedSolution: finding.detailedSolution ?? mapped.detailedSolution,
       suggestedFixes: suggestions
     };
 

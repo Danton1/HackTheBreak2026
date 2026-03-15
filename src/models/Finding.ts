@@ -23,7 +23,7 @@ export interface Finding {
   canAutoFix?: boolean;
   autoFixKind?: string;
   confidence?: Remediation['confidence'];
-  source?: 'semgrep' | 'regex' | 'manual';
+  source?: 'semgrep' | 'regex' | 'custom-regex' | 'manual';
 }
 
 export function findingToRange(finding: Finding): vscode.Range {
