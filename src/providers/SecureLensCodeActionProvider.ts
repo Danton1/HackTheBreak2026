@@ -5,6 +5,11 @@ import { Finding } from '../models/Finding';
 import { RemediationAction } from '../models/Remediation';
 import { FindingsStore } from '../services/FindingsStore';
 
+interface EnvResolution {
+  resolvedName: string;
+  shouldAppend: boolean;
+}
+
 export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
   public static readonly providedCodeActionKinds = [vscode.CodeActionKind.QuickFix];
 
@@ -115,18 +120,27 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
       return undefined;
     }
 
-    const text = document.getText(diagnostic.range);
-    const literalValue = this.extractLiteralValue(text);
-
-    // If we cannot safely parse the current literal, skip the quick fix to avoid data loss.
-    if (!literalValue) {
+    const assignmentContext = this.extractAssignmentContext(document, diagnostic, finding);
+    if (!assignmentContext) {
       return undefined;
     }
 
-    const envName = this.deriveEnvName(text, finding);
-    const fixed = text.replace(/([=:]\s*)(["'`])[^"'`]+(\2)/, `$1process.env.${envName}`);
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (!workspaceFolder) {
+      return undefined;
+    }
 
-    if (fixed === text) {
+    const envPath = path.join(workspaceFolder.uri.fsPath, '.env');
+    const envMap = this.readEnvMap(envPath);
+    const baseName = this.deriveEnvName(assignmentContext.identifier);
+    const envResolution = this.resolveEnvName(baseName, assignmentContext.literalValue, envMap);
+
+    const fixed = assignmentContext.text.replace(
+      /([=:]\s*)(["'`])[^"'`]+(\2)/,
+      `$1process.env.${envResolution.resolvedName}`
+    );
+
+    if (fixed === assignmentContext.text) {
       return undefined;
     }
 
@@ -134,8 +148,11 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     action.diagnostics = [diagnostic];
 
     const edit = new vscode.WorkspaceEdit();
-    edit.replace(document.uri, diagnostic.range, fixed);
-    this.ensureEnvFileContainsVar(edit, document.uri, envName, literalValue);
+    edit.replace(document.uri, assignmentContext.range, fixed);
+
+    if (envResolution.shouldAppend) {
+      this.appendEnvValue(edit, envPath, envResolution.resolvedName, assignmentContext.literalValue);
+    }
 
     action.edit = edit;
     action.isPreferred = suggestion.isPreferred ?? false;
@@ -143,18 +160,57 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     return action;
   }
 
-  private ensureEnvFileContainsVar(
+  private extractAssignmentContext(
+    document: vscode.TextDocument,
+    diagnostic: vscode.Diagnostic,
+    finding: Finding
+  ): { identifier: string; literalValue: string; text: string; range: vscode.Range } | undefined {
+    const line = document.lineAt(diagnostic.range.start.line);
+    const lineText = line.text;
+    const assignmentMatch = lineText.match(/\b(?:const|let|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(["'`])([^"'`]+)\2/);
+
+    if (assignmentMatch) {
+      const startChar = assignmentMatch.index ?? 0;
+      const endChar = startChar + assignmentMatch[0].length;
+
+      return {
+        identifier: assignmentMatch[1],
+        literalValue: assignmentMatch[3],
+        text: assignmentMatch[0],
+        range: new vscode.Range(
+          new vscode.Position(diagnostic.range.start.line, startChar),
+          new vscode.Position(diagnostic.range.start.line, endChar)
+        )
+      };
+    }
+
+    const text = document.getText(diagnostic.range);
+    const fallbackMatch = text.match(/\b([A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(["'`])([^"'`]+)\2/);
+
+    if (!fallbackMatch) {
+      return undefined;
+    }
+
+    return {
+      identifier: fallbackMatch[1] || this.deriveIdentifierFromFinding(finding),
+      literalValue: fallbackMatch[3],
+      text,
+      range: diagnostic.range
+    };
+  }
+
+  private deriveIdentifierFromFinding(finding: Finding): string {
+    const snippet = finding.snippet ?? '';
+    const match = snippet.match(/\b([A-Za-z_][A-Za-z0-9_]*)\s*[:=]/);
+    return match?.[1] ?? 'SECRET_VALUE';
+  }
+
+  private appendEnvValue(
     edit: vscode.WorkspaceEdit,
-    documentUri: vscode.Uri,
+    envPath: string,
     envName: string,
     literalValue: string
   ): void {
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
-    if (!workspaceFolder) {
-      return;
-    }
-
-    const envPath = path.join(workspaceFolder.uri.fsPath, '.env');
     const envUri = vscode.Uri.file(envPath);
     const envEntry = `${envName}=${this.toEnvValue(literalValue)}\n`;
 
@@ -165,12 +221,6 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     const content = fs.readFileSync(envPath, 'utf8');
-    const alreadyDefined = new RegExp(`^\\s*${this.escapeForRegex(envName)}\\s*=`, 'm').test(content);
-
-    if (alreadyDefined) {
-      return;
-    }
-
     const lines = content.split('\n');
     const lastLineIndex = Math.max(lines.length - 1, 0);
     const lastChar = lines[lastLineIndex]?.length ?? 0;
@@ -179,15 +229,73 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     edit.insert(envUri, new vscode.Position(lastLineIndex, lastChar), `${prefix}${envEntry}`);
   }
 
-  private extractLiteralValue(text: string): string | undefined {
-    const literalMatch = text.match(/[=:]\s*(["'`])([^"'`]+)\1/);
-    const value = literalMatch?.[2]?.trim();
+  private readEnvMap(envPath: string): Map<string, string> {
+    const map = new Map<string, string>();
 
-    if (!value) {
-      return undefined;
+    if (!fs.existsSync(envPath)) {
+      return map;
     }
 
-    return value;
+    const content = fs.readFileSync(envPath, 'utf8');
+    const lines = content.split(/\r?\n/);
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        continue;
+      }
+
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex <= 0) {
+        continue;
+      }
+
+      const key = trimmed.slice(0, eqIndex).trim();
+      const value = trimmed.slice(eqIndex + 1).trim();
+      map.set(key, value);
+    }
+
+    return map;
+  }
+
+  private resolveEnvName(baseName: string, literalValue: string, envMap: Map<string, string>): EnvResolution {
+    const normalizedNewValue = this.normalizeEnvValue(literalValue);
+
+    const existingBase = envMap.get(baseName);
+    if (!existingBase) {
+      return { resolvedName: baseName, shouldAppend: true };
+    }
+
+    if (this.normalizeEnvValue(existingBase) === normalizedNewValue) {
+      return { resolvedName: baseName, shouldAppend: false };
+    }
+
+    let suffix = 1;
+    while (suffix < 1000) {
+      const candidate = `${baseName}_${suffix}`;
+      const existingCandidate = envMap.get(candidate);
+
+      if (!existingCandidate) {
+        return { resolvedName: candidate, shouldAppend: true };
+      }
+
+      if (this.normalizeEnvValue(existingCandidate) === normalizedNewValue) {
+        return { resolvedName: candidate, shouldAppend: false };
+      }
+
+      suffix += 1;
+    }
+
+    return { resolvedName: `${baseName}_1`, shouldAppend: true };
+  }
+
+  private normalizeEnvValue(value: string): string {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      return trimmed.slice(1, -1);
+    }
+
+    return trimmed;
   }
 
   private toEnvValue(value: string): string {
@@ -200,15 +308,8 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     return `"${escaped}"`;
   }
 
-  private deriveEnvName(text: string, _finding: Finding): string {
-    const variableMatch = text.match(/\b(?:const|let|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*[=:]/);
-    const raw = variableMatch?.[1] ?? '';
-
-    if (!raw) {
-      return 'SECRET_VALUE';
-    }
-
-    const normalized = raw
+  private deriveEnvName(identifier: string): string {
+    const normalized = identifier
       .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
       .replace(/[^A-Za-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '')
@@ -245,9 +346,5 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     return undefined;
-  }
-
-  private escapeForRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 }

@@ -220,12 +220,13 @@ async function runScan(
     }
 
     const regexFindings = await deps.regexRuleService.scanTargets(request.targets);
-    const merged = dedupeFindings([...regexFindings, ...semgrepFindings]);
-    const enrichedFindings = dedupeFindings(merged.map((finding) => deps.remediationService.enrichFinding(finding)));
+    const merged = [...semgrepFindings, ...regexFindings];
+    const enrichedFindings = merged.map((finding) => deps.remediationService.enrichFinding(finding));
+    const resolvedFindings = dedupeFindings(enrichedFindings);
 
-    onFindings(enrichedFindings);
+    onFindings(resolvedFindings);
 
-    const summary = `SecureLens found ${enrichedFindings.length} issue${enrichedFindings.length === 1 ? '' : 's'}`;
+    const summary = `SecureLens found ${resolvedFindings.length} issue${resolvedFindings.length === 1 ? '' : 's'}`;
     outputChannel.appendLine(`[SecureLens] ${summary}`);
     outputChannel.appendLine('[SecureLens] SecureLens scan completed');
     vscode.window.setStatusBarMessage(summary, 4000);
@@ -257,24 +258,48 @@ async function openFinding(finding: Finding): Promise<void> {
 }
 
 function dedupeFindings(findings: Finding[]): Finding[] {
-  const deduped: Finding[] = [];
-  const seen = new Set<string>();
+  const buckets = new Map<string, Finding>();
 
   for (const finding of findings) {
-    const secretKey = finding.category === 'hardcoded-secret'
-      ? `hardcoded-secret|${finding.filePath}|${finding.startLine}|${finding.startCol}`
-      : undefined;
-    const key = secretKey ?? `${finding.ruleId}|${finding.filePath}|${finding.startLine}|${finding.startCol}|${finding.message}`;
+    const key = dedupeKeyFor(finding);
+    const existing = buckets.get(key);
 
-    if (seen.has(key)) {
+    if (!existing) {
+      buckets.set(key, finding);
       continue;
     }
 
-    seen.add(key);
-    deduped.push(finding);
+    buckets.set(key, resolveDuplicateFinding(existing, finding));
   }
 
-  return deduped;
+  return Array.from(buckets.values());
+}
+
+function dedupeKeyFor(finding: Finding): string {
+  if (finding.category === 'hardcoded-secret') {
+    return `hardcoded-secret|${finding.filePath}|${finding.startLine}`;
+  }
+
+  return `${finding.ruleId}|${finding.filePath}|${finding.startLine}|${finding.startCol}|${finding.message}`;
+}
+
+function resolveDuplicateFinding(existing: Finding, incoming: Finding): Finding {
+  if (existing.category === 'hardcoded-secret' && incoming.category === 'hardcoded-secret') {
+    if (incoming.source === 'regex' && existing.source !== 'regex') {
+      return incoming;
+    }
+
+    if (existing.source === 'regex' && incoming.source !== 'regex') {
+      return existing;
+    }
+
+    const existingWidth = (existing.endCol - existing.startCol) + (existing.endLine - existing.startLine) * 1000;
+    const incomingWidth = (incoming.endCol - incoming.startCol) + (incoming.endLine - incoming.startLine) * 1000;
+
+    return incomingWidth > existingWidth ? incoming : existing;
+  }
+
+  return existing;
 }
 
 function extractFindingId(arg: unknown): string | undefined {
@@ -308,5 +333,3 @@ function toErrorMessage(error: unknown): string {
 
   return String(error);
 }
-
-

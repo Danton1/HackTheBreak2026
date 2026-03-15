@@ -1,6 +1,8 @@
 const apiKey = "abc123-super-secret-key";
 const dbPassword = "myPassword123";
+const PasswordDB = "ludsuluilhldshnuc";
 const myOtherPassword = "test_123456789";
+const aNormalString = "test_normal";
 const bearerToken = "Bearer sk_test_123456789";
 
 function findUser(username) {

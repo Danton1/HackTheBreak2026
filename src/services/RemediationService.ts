@@ -7,10 +7,15 @@ const SECRET_EXPLANATION =
 const SECRET_SOLUTION =
   'Move the secret into a .env file or another secure secret manager. Replace the hardcoded literal with an environment variable reference such as process.env.MY_API_KEY. Ensure .env is ignored by version control, and consider committing a .env.example file so teammates know which variables are required without exposing real credentials.';
 
+const SECRET_EXPOSURE_EXPLANATION =
+  'A secret-like value appears to be used in a high-risk sink such as headers, URL query strings, or logs. This can expose credentials in telemetry, browser history, reverse proxies, or logs.';
+
+const SECRET_EXPOSURE_SOLUTION =
+  'Avoid placing secrets in URL query strings or logs. Prefer Authorization headers with short-lived tokens from secure storage, redact sensitive values before logging, and review network/client instrumentation for accidental leakage.';
+
 const SECRET_ACTION: RemediationAction = {
   id: 'secret.env.quickfix',
   title: 'Move secret to environment variable (.env)',
-  description: 'Keep credentials out of source code. Replace the hardcoded literal with an environment variable reference and ensure the variable exists in .env.',
   detail: 'Keep credentials out of source code. Replace the hardcoded literal with an environment variable reference and ensure the variable exists in .env.',
   kind: 'quickfix',
   commandId: 'securelens.quickfix.replaceWithEnv',
@@ -44,6 +49,30 @@ const REMEDIATION_MAP: Record<string, Remediation> = {
     canAutoFix: false,
     confidence: 'high',
     references: ['https://12factor.net/config']
+  },
+  'securelens.regex.secret-exposure.authorization-header': {
+    category: 'secret-exposure',
+    explanation: SECRET_EXPOSURE_EXPLANATION,
+    detailedSolution: SECRET_EXPOSURE_SOLUTION,
+    suggestedFixes: [],
+    canAutoFix: false,
+    confidence: 'medium'
+  },
+  'securelens.regex.secret-exposure.querystring': {
+    category: 'secret-exposure',
+    explanation: SECRET_EXPOSURE_EXPLANATION,
+    detailedSolution: SECRET_EXPOSURE_SOLUTION,
+    suggestedFixes: [],
+    canAutoFix: false,
+    confidence: 'medium'
+  },
+  'securelens.regex.secret-exposure.logging': {
+    category: 'secret-exposure',
+    explanation: SECRET_EXPOSURE_EXPLANATION,
+    detailedSolution: SECRET_EXPOSURE_SOLUTION,
+    suggestedFixes: [],
+    canAutoFix: false,
+    confidence: 'medium'
   },
   'securelens.js.sql-string-concat': {
     category: 'sql-injection',
@@ -174,6 +203,17 @@ export class RemediationService {
         canAutoFix: false,
         confidence: 'medium',
         references: ['https://12factor.net/config']
+      };
+    }
+
+    if (text.includes('authorization header') || text.includes('query string') || text.includes('logged')) {
+      return {
+        category: 'secret-exposure',
+        explanation: SECRET_EXPOSURE_EXPLANATION,
+        detailedSolution: SECRET_EXPOSURE_SOLUTION,
+        suggestedFixes: [],
+        canAutoFix: false,
+        confidence: 'medium'
       };
     }
 
