@@ -55,11 +55,18 @@ export class SuggestionsTreeProvider implements vscode.TreeDataProvider<Suggesti
   }
 
   private makeSuggestionKey(finding: Finding, suggestion: RemediationAction): string {
+    const findingKey = this.makeFindingScopeKey(finding);
+    const rangeKey = `${finding.startLine}:${finding.startCol}-${finding.endLine}:${finding.endCol}`;
     const commandKey = suggestion.commandId ?? '';
     const titleKey = this.normalizeSuggestionText(suggestion.title);
     const detailKey = this.normalizeSuggestionText(suggestion.detail ?? '');
 
-    return `${finding.id}|${suggestion.kind}|${commandKey}|${titleKey}|${detailKey}`;
+    return `${findingKey}|${rangeKey}|${suggestion.kind}|${commandKey}|${titleKey}|${detailKey}`;
+  }
+
+  private makeFindingScopeKey(finding: Finding): string {
+    const categoryKey = finding.category && finding.category !== 'generic-security-warning' ? finding.category : finding.ruleId;
+    return `${finding.filePath}|${categoryKey}`;
   }
 
   private normalizeSuggestionText(value: string): string {

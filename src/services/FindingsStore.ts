@@ -15,7 +15,7 @@ export class FindingsStore implements vscode.Disposable {
 
   public replaceAll(findings: Finding[]): void {
     this.findingsById = new Map(findings.map((finding) => [finding.id, finding]));
-    this.pruneDismissedIds();
+    this.dismissedIds.clear();
     this.onDidChangeEmitter.fire();
   }
 
@@ -35,18 +35,21 @@ export class FindingsStore implements vscode.Disposable {
 
   public replaceForFile(filePath: string, findings: Finding[]): void {
     const normalizedTarget = path.normalize(filePath);
+    const replacedFindingIds = new Set<string>();
 
     for (const [findingId, finding] of this.findingsById.entries()) {
       if (path.normalize(finding.filePath) === normalizedTarget) {
         this.findingsById.delete(findingId);
+        replacedFindingIds.add(findingId);
       }
     }
 
     for (const finding of findings) {
       this.findingsById.set(finding.id, finding);
+      replacedFindingIds.add(finding.id);
     }
 
-    this.pruneDismissedIds();
+    this.clearDismissedIds(replacedFindingIds);
     this.onDidChangeEmitter.fire();
   }
 
@@ -61,12 +64,30 @@ export class FindingsStore implements vscode.Disposable {
     this.onDidChangeEmitter.fire();
   }
 
+  public dismissAllFindings(): void {
+    const activeFindings = this.getActiveFindings();
+    if (activeFindings.length === 0) {
+      return;
+    }
+
+    for (const finding of activeFindings) {
+      this.dismissedIds.add(finding.id);
+    }
+
+    this.onDidChangeEmitter.fire();
+  }
+
   public dispose(): void {
     this.onDidChangeEmitter.dispose();
   }
 
-  private pruneDismissedIds(): void {
-    const activeIds = new Set(this.findingsById.keys());
-    this.dismissedIds = new Set(Array.from(this.dismissedIds).filter((findingId) => activeIds.has(findingId)));
+  private clearDismissedIds(idsToClear: Set<string>): void {
+    if (idsToClear.size === 0) {
+      return;
+    }
+
+    this.dismissedIds = new Set(
+      Array.from(this.dismissedIds).filter((findingId) => !idsToClear.has(findingId))
+    );
   }
 }

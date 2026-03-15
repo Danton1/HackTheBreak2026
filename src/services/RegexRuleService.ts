@@ -149,7 +149,7 @@ const EVAL_REGEX = /\beval\s*\(|\bnew\s+Function\s*\(/g;
 const COMMAND_EXEC_REGEX =
   /\b(?:child_process\.)?(?:exec|execSync)\s*\(|\brequire\((["'`])child_process\1\)\.(?:exec|execSync|spawn)\s*\(|\bspawn\s*\([^)]*\{[^}]*\bshell\s*:\s*true/gi;
 const SQL_CONCAT_REGEX =
-  /["'`]\s*(?:SELECT|INSERT|UPDATE|DELETE)\b[^"'`\n]*["'`]\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)/gi;
+  /\b(?:const|let|var)?\s*[A-Za-z_][A-Za-z0-9_]*\s*[:=]\s*(["'`])\s*(?:SELECT|INSERT|UPDATE|DELETE)\b(?:\\.|(?!\1).)*\1\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)/gi;
 
 const PLACEHOLDER_PATTERNS = [
   'your_api_key_here',

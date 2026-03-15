@@ -90,12 +90,18 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     diagnostic: vscode.Diagnostic,
     suggestion: RemediationAction
   ): string {
+    const findingKey = this.makeFindingScopeKey(finding);
     const rangeKey = this.rangeToKey(diagnostic.range);
     const commandKey = suggestion.commandId ?? '';
     const fallbackTitleKey = commandKey ? '' : this.normalizeSuggestionText(suggestion.title);
     const fallbackDetailKey = commandKey ? '' : this.normalizeSuggestionText(suggestion.detail ?? '');
 
-    return `${finding.id}|${rangeKey}|${suggestion.kind}|${commandKey}|${fallbackTitleKey}|${fallbackDetailKey}`;
+    return `${findingKey}|${rangeKey}|${suggestion.kind}|${commandKey}|${fallbackTitleKey}|${fallbackDetailKey}`;
+  }
+
+  private makeFindingScopeKey(finding: Finding): string {
+    const categoryKey = finding.category && finding.category !== 'generic-security-warning' ? finding.category : finding.ruleId;
+    return `${finding.filePath}|${categoryKey}`;
   }
 
   private rangeToKey(range: vscode.Range): string {

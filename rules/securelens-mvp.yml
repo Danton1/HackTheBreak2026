@@ -1,10 +1,10 @@
 rules:
   - id: securelens.js.sql-string-concat
-    message: Avoid building SQL queries by concatenating strings.
+    message: Potential SQL injection: query built with string concatenation.
     severity: WARNING
     languages: [javascript, typescript]
     metadata:
-      shortDescription: String-built SQL queries are prone to SQL injection.
+      shortDescription: This query appears to be built with string concatenation.
     patterns:
       - pattern-either:
           - pattern: $DB.query("..." + ...)
@@ -12,48 +12,54 @@ rules:
           - pattern: $DB.execute("..." + ...)
           - pattern: $SQL = "..." + ...
           - pattern: $SQL = `...${...}...`
+          - pattern: const $SQL = "..." + ...
+          - pattern: const $SQL = `...${...}...`
+          - pattern: let $SQL = "..." + ...
+          - pattern: let $SQL = `...${...}...`
+          - pattern: var $SQL = "..." + ...
+          - pattern: var $SQL = `...${...}...`
 
   - id: securelens.js.dangerous-innerhtml
-    message: Avoid assigning dynamic content to innerHTML.
+    message: Potential XSS: innerHTML used with dynamic content.
     severity: WARNING
     languages: [javascript, typescript]
     metadata:
-      shortDescription: Untrusted HTML assignment can lead to XSS.
+      shortDescription: This code inserts dynamic content with innerHTML.
     patterns:
       - pattern-either:
           - pattern: $EL.innerHTML = $VALUE
           - pattern: document.$METHOD(...).innerHTML = $VALUE
 
   - id: securelens.js.exec-user-input
-    message: Avoid passing dynamic input into child_process.exec.
+    message: Potential command injection or unsafe process execution.
     severity: ERROR
     languages: [javascript, typescript]
     metadata:
-      shortDescription: Dynamic shell execution can lead to command injection.
+      shortDescription: This code may execute a shell command built from dynamic input.
     pattern: exec($CMD)
 
   - id: securelens.js.eval-usage
-    message: Avoid using eval with dynamic input.
+    message: Dynamic code execution detected.
     severity: ERROR
     languages: [javascript, typescript]
     metadata:
-      shortDescription: eval can execute attacker-controlled code.
+      shortDescription: This code uses dynamic evaluation.
     pattern: eval($CODE)
 
   - id: securelens.js.hardcoded-password
-    message: Possible hardcoded password or secret detected.
+    message: Possible hardcoded secret detected. Move this value to an environment variable.
     severity: WARNING
     languages: [javascript, typescript]
     metadata:
-      shortDescription: Hardcoded credentials are risky and easy to leak.
+      shortDescription: This value looks like a hardcoded secret.
     pattern-regex: (?i)(password|passwd|api[_-]?key|secret)\s*[:=]\s*["'][^"']{6,}["']
 
   - id: securelens.py.sql-string-concat
-    message: Avoid building SQL queries by concatenating strings.
+    message: Potential SQL injection: query built with string concatenation.
     severity: WARNING
     languages: [python]
     metadata:
-      shortDescription: String-built SQL queries are prone to SQL injection.
+      shortDescription: This query appears to be built with string concatenation.
     patterns:
       - pattern-either:
           - pattern: $CURSOR.execute("..." + ...)
