@@ -1,4 +1,4 @@
-# SecureLens
+# 🛡️🔍 SecureLens
 
 SecureLens is a VS Code security assistant that goes beyond a plain scanner.
 
@@ -42,7 +42,7 @@ Key differentiators:
 
 1. Node.js 18+
 2. VS Code 1.90+
-3. Python 3.8+ (for Semgrep CLI)
+3. Python 3.10+ (for Semgrep CLI)
 4. Semgrep installed and available on `PATH`
 
 Example install:

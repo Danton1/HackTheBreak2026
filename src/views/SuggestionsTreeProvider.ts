@@ -1,11 +1,11 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Finding } from '../models/Finding';
-import { Suggestion } from '../models/Suggestion';
+import { RemediationAction } from '../models/Remediation';
 
 interface SuggestionEntry {
   finding: Finding;
-  suggestion: Suggestion;
+  suggestion: RemediationAction;
 }
 
 export class SuggestionsTreeProvider implements vscode.TreeDataProvider<SuggestionTreeItem> {
@@ -15,11 +15,22 @@ export class SuggestionsTreeProvider implements vscode.TreeDataProvider<Suggesti
   public readonly onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
 
   public setFindings(findings: Finding[]): void {
-    this.items = findings.flatMap((finding) => {
-      const suggestions = finding.suggestions ?? [];
-      return suggestions.map((suggestion) => ({ finding, suggestion }));
-    });
+    const seen = new Set<string>();
+    const nextItems: SuggestionEntry[] = [];
 
+    for (const finding of findings) {
+      for (const suggestion of finding.suggestions ?? []) {
+        const key = this.makeSuggestionKey(finding, suggestion);
+        if (seen.has(key)) {
+          continue;
+        }
+
+        seen.add(key);
+        nextItems.push({ finding, suggestion });
+      }
+    }
+
+    this.items = nextItems;
     this.onDidChangeTreeDataEmitter.fire(undefined);
   }
 
@@ -41,6 +52,18 @@ export class SuggestionsTreeProvider implements vscode.TreeDataProvider<Suggesti
 
   public dispose(): void {
     this.onDidChangeTreeDataEmitter.dispose();
+  }
+
+  private makeSuggestionKey(finding: Finding, suggestion: RemediationAction): string {
+    const commandKey = suggestion.commandId ?? '';
+    const titleKey = this.normalizeSuggestionText(suggestion.title);
+    const detailKey = this.normalizeSuggestionText(suggestion.detail ?? '');
+
+    return `${finding.id}|${suggestion.kind}|${commandKey}|${titleKey}|${detailKey}`;
+  }
+
+  private normalizeSuggestionText(value: string): string {
+    return value.trim().toLowerCase();
   }
 }
 
@@ -74,6 +97,10 @@ class SuggestionTreeItem extends vscode.TreeItem {
     tooltip.appendMarkdown(`**${entry.suggestion.title}**\n\n`);
     if (entry.suggestion.detail) {
       tooltip.appendMarkdown(`${entry.suggestion.detail}\n\n`);
+    }
+
+    if (entry.finding.detailedSolution) {
+      tooltip.appendMarkdown(`**What to do next**\n${entry.finding.detailedSolution}\n\n`);
     }
 
     tooltip.appendMarkdown(`Linked finding: ${entry.finding.message}`);

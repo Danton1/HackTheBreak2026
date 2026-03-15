@@ -36,7 +36,7 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
       }
 
       for (const suggestion of finding.suggestions ?? []) {
-        const dedupeKey = `${finding.id}|${suggestion.id}|${suggestion.commandId ?? ''}|${suggestion.title}`;
+        const dedupeKey = this.makeActionDedupeKey(finding, diagnostic, suggestion);
         if (seen.has(dedupeKey)) {
           continue;
         }
@@ -83,6 +83,27 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     return undefined;
+  }
+
+  private makeActionDedupeKey(
+    finding: Finding,
+    diagnostic: vscode.Diagnostic,
+    suggestion: RemediationAction
+  ): string {
+    const rangeKey = this.rangeToKey(diagnostic.range);
+    const commandKey = suggestion.commandId ?? '';
+    const fallbackTitleKey = commandKey ? '' : this.normalizeSuggestionText(suggestion.title);
+    const fallbackDetailKey = commandKey ? '' : this.normalizeSuggestionText(suggestion.detail ?? '');
+
+    return `${finding.id}|${rangeKey}|${suggestion.kind}|${commandKey}|${fallbackTitleKey}|${fallbackDetailKey}`;
+  }
+
+  private rangeToKey(range: vscode.Range): string {
+    return `${range.start.line}:${range.start.character}-${range.end.line}:${range.end.character}`;
+  }
+
+  private normalizeSuggestionText(value: string): string {
+    return value.trim().toLowerCase();
   }
 
   private createInnerHtmlFix(

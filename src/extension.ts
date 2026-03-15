@@ -257,22 +257,23 @@ async function openFinding(finding: Finding): Promise<void> {
   editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
 }
 
+const OVERLAP_DEDUP_CATEGORIES = new Set([
+  'hardcoded-secret',
+  'sql-injection',
+  'xss-innerhtml',
+  'command-injection',
+  'insecure-eval',
+  'secret-exposure'
+]);
+
 function dedupeFindings(findings: Finding[]): Finding[] {
   const resolved: Finding[] = [];
   const keyedIndexes = new Map<string, number>();
 
   for (const finding of findings) {
-    if (finding.category === 'hardcoded-secret') {
-      const existingIndex = resolved.findIndex(
-        (candidate) => candidate.category === 'hardcoded-secret' && hardcodedSecretFindingsOverlap(candidate, finding)
-      );
-
-      if (existingIndex === -1) {
-        resolved.push(finding);
-        continue;
-      }
-
-      resolved[existingIndex] = resolveDuplicateFinding(resolved[existingIndex], finding);
+    const overlapIndex = findOverlapDuplicateIndex(resolved, finding);
+    if (overlapIndex !== -1) {
+      resolved[overlapIndex] = resolveDuplicateFinding(resolved[overlapIndex], finding);
       continue;
     }
 
@@ -291,34 +292,83 @@ function dedupeFindings(findings: Finding[]): Finding[] {
   return resolved;
 }
 
-function dedupeKeyFor(finding: Finding): string {
-  if (finding.category === 'hardcoded-secret') {
-    return `hardcoded-secret|${finding.filePath}|${finding.startLine}`;
+function findOverlapDuplicateIndex(findings: Finding[], incoming: Finding): number {
+  if (!incoming.category || !OVERLAP_DEDUP_CATEGORIES.has(incoming.category)) {
+    return -1;
   }
 
-  return `${finding.ruleId}|${finding.filePath}|${finding.startLine}|${finding.startCol}|${finding.message}`;
+  return findings.findIndex((candidate) => shouldDeduplicateByOverlap(candidate, incoming));
+}
+
+function shouldDeduplicateByOverlap(existing: Finding, incoming: Finding): boolean {
+  if (existing.category !== incoming.category) {
+    return false;
+  }
+
+  if (existing.filePath !== incoming.filePath) {
+    return false;
+  }
+
+  const sources = new Set([existing.source, incoming.source]);
+  if (!(sources.has('semgrep') && sources.has('regex'))) {
+    return false;
+  }
+
+  return findingsOverlap(existing, incoming);
+}
+
+function dedupeKeyFor(finding: Finding): string {
+  return `${finding.ruleId}|${finding.filePath}|${finding.startLine}|${finding.startCol}|${finding.endLine}|${finding.endCol}|${finding.message}`;
 }
 
 function resolveDuplicateFinding(existing: Finding, incoming: Finding): Finding {
-  if (existing.category === 'hardcoded-secret' && incoming.category === 'hardcoded-secret') {
-    if (incoming.source === 'regex' && existing.source !== 'regex') {
+  if (existing.category === incoming.category) {
+    if (existing.category === 'hardcoded-secret') {
+      if (incoming.source === 'regex' && existing.source !== 'regex') {
+        return incoming;
+      }
+
+      if (existing.source === 'regex' && incoming.source !== 'regex') {
+        return existing;
+      }
+    }
+
+    if (incoming.source === 'semgrep' && existing.source !== 'semgrep') {
       return incoming;
     }
 
-    if (existing.source === 'regex' && incoming.source !== 'regex') {
+    if (existing.source === 'semgrep' && incoming.source !== 'semgrep') {
       return existing;
     }
+  }
 
-    const existingWidth = (existing.endCol - existing.startCol) + (existing.endLine - existing.startLine) * 1000;
-    const incomingWidth = (incoming.endCol - incoming.startCol) + (incoming.endLine - incoming.startLine) * 1000;
+  return chooseMoreUsefulFinding(existing, incoming);
+}
 
+function chooseMoreUsefulFinding(existing: Finding, incoming: Finding): Finding {
+  const existingWidth = (existing.endCol - existing.startCol) + (existing.endLine - existing.startLine) * 1000;
+  const incomingWidth = (incoming.endCol - incoming.startCol) + (incoming.endLine - incoming.startLine) * 1000;
+
+  if (incomingWidth !== existingWidth) {
     return incomingWidth > existingWidth ? incoming : existing;
   }
 
-  return existing;
+  return severityRank(incoming.severity) > severityRank(existing.severity) ? incoming : existing;
 }
 
-function hardcodedSecretFindingsOverlap(a: Finding, b: Finding): boolean {
+function severityRank(severity: Finding['severity']): number {
+  switch (severity) {
+    case 'ERROR':
+      return 3;
+    case 'WARNING':
+      return 2;
+    case 'INFO':
+    default:
+      return 1;
+  }
+}
+
+function findingsOverlap(a: Finding, b: Finding): boolean {
   if (a.filePath !== b.filePath) {
     return false;
   }
