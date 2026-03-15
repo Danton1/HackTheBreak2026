@@ -220,7 +220,7 @@ async function runScan(
     }
 
     const regexFindings = await deps.regexRuleService.scanTargets(request.targets);
-    const merged = dedupeFindings([...semgrepFindings, ...regexFindings]);
+    const merged = dedupeFindings([...regexFindings, ...semgrepFindings]);
     const enrichedFindings = dedupeFindings(merged.map((finding) => deps.remediationService.enrichFinding(finding)));
 
     onFindings(enrichedFindings);

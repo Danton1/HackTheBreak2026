@@ -7,7 +7,6 @@ interface RegexRule {
   id: string;
   name: string;
   description: string;
-  regex: RegExp;
   category: 'hardcoded-secret';
   severity: FindingSeverity;
   supportedExtensions: string[];
@@ -15,27 +14,25 @@ interface RegexRule {
 
 const SUPPORTED_EXTENSIONS = new Set(['.js', '.ts', '.jsx', '.tsx', '.py']);
 
-const SECRET_RULES: RegexRule[] = [
-  {
-    id: 'securelens.regex.secret.assignment',
-    name: 'Hardcoded secret assignment',
-    description: 'Likely hardcoded secret assigned in code.',
-    regex: /\b(?:api[_-]?key|secret|password|token|bearer[_-]?token|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*(["'`])([^"'`\n]{8,})\1/gi,
-    category: 'hardcoded-secret',
-    severity: 'WARNING',
-    supportedExtensions: ['.js', '.ts', '.jsx', '.tsx', '.py']
-  },
-  {
-    id: 'securelens.regex.secret.authorization-bearer',
-    name: 'Hardcoded bearer token literal',
-    description: 'Likely bearer token string literal embedded in code.',
-    regex: /(["'`])Bearer\s+[A-Za-z0-9_\-\.]{12,}\1/gi,
-    category: 'hardcoded-secret',
-    severity: 'WARNING',
-    supportedExtensions: ['.js', '.ts', '.jsx', '.tsx', '.py']
-  }
-];
+const SECRET_RULE: RegexRule = {
+  id: 'securelens.regex.secret.assignment',
+  name: 'Hardcoded secret assignment',
+  description: 'Likely hardcoded secret assigned in code.',
+  category: 'hardcoded-secret',
+  severity: 'WARNING',
+  supportedExtensions: ['.js', '.ts', '.jsx', '.tsx', '.py']
+};
 
+const BEARER_RULE: RegexRule = {
+  id: 'securelens.regex.secret.authorization-bearer',
+  name: 'Hardcoded bearer token literal',
+  description: 'Likely bearer token string literal embedded in code.',
+  category: 'hardcoded-secret',
+  severity: 'WARNING',
+  supportedExtensions: ['.js', '.ts', '.jsx', '.tsx', '.py']
+};
+
+const ASSIGNMENT_REGEX = /\b([A-Za-z_][A-Za-z0-9_]*)\b\s*[:=]\s*(["'`])([^"'`\n]{8,})\2/g;
 const PLACEHOLDER_PATTERNS = [
   'your_api_key_here',
   'your-token-here',
@@ -44,8 +41,22 @@ const PLACEHOLDER_PATTERNS = [
   'example',
   'sample',
   'dummy',
-  'test',
   'password123'
+];
+const SECRET_NAME_HINTS = [
+  'password',
+  'secret',
+  'token',
+  'apikey',
+  'api_key',
+  'bearer',
+  'auth',
+  'clientsecret',
+  'client_secret',
+  'accesskey',
+  'access_key',
+  'privatekey',
+  'private_key'
 ];
 
 export class RegexRuleService {
@@ -117,27 +128,28 @@ export class RegexRuleService {
 
   private async scanFile(filePath: string): Promise<Finding[]> {
     const extension = path.extname(filePath).toLowerCase();
+    if (!SUPPORTED_EXTENSIONS.has(extension)) {
+      return [];
+    }
+
     const source = await fs.readFile(filePath, 'utf8');
     const findings: Finding[] = [];
 
-    for (const rule of SECRET_RULES) {
-      if (!rule.supportedExtensions.includes(extension)) {
+    for (const match of source.matchAll(ASSIGNMENT_REGEX)) {
+      const identifier = match[1] ?? '';
+      const literal = match[3] ?? '';
+      const fullMatch = match[0] ?? '';
+
+      if (!this.shouldFlag(identifier, literal)) {
         continue;
       }
 
-      const matches = source.matchAll(rule.regex);
-      for (const match of matches) {
-        const fullMatch = match[0];
-        const secretValue = match[2] ?? fullMatch;
+      const rule = this.isBearerLiteral(literal) ? BEARER_RULE : SECRET_RULE;
+      const startOffset = match.index ?? 0;
+      const location = this.toLineColumn(source, startOffset, fullMatch.length);
 
-        if (!this.isHighSignalSecret(secretValue)) {
-          continue;
-        }
-
-        const startOffset = match.index ?? 0;
-        const location = this.toLineColumn(source, startOffset, fullMatch.length);
-
-        const finding = this.toFinding({
+      findings.push(
+        this.toFinding({
           rule,
           filePath,
           matchedText: fullMatch,
@@ -145,13 +157,46 @@ export class RegexRuleService {
           startCol: location.startCol,
           endLine: location.endLine,
           endCol: location.endCol
-        });
-
-        findings.push(finding);
-      }
+        })
+      );
     }
 
     return findings;
+  }
+
+  private shouldFlag(identifier: string, literal: string): boolean {
+    if (!this.isHighSignalLiteral(literal)) {
+      return false;
+    }
+
+    return this.isSecretLikeIdentifier(identifier) || this.isBearerLiteral(literal);
+  }
+
+  private isSecretLikeIdentifier(identifier: string): boolean {
+    const normalized = identifier.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+    return SECRET_NAME_HINTS.some((hint) => normalized.includes(hint.replace(/[^A-Za-z0-9]/g, '')));
+  }
+
+  private isBearerLiteral(literal: string): boolean {
+    return /^bearer\s+[a-z0-9._\-]{10,}$/i.test(literal.trim());
+  }
+
+  private isHighSignalLiteral(rawValue: string): boolean {
+    const value = rawValue.trim().toLowerCase();
+
+    if (!value || value.length < 8) {
+      return false;
+    }
+
+    if (PLACEHOLDER_PATTERNS.some((placeholder) => value.includes(placeholder))) {
+      return false;
+    }
+
+    if (/^[x*_-]+$/i.test(value)) {
+      return false;
+    }
+
+    return true;
   }
 
   private toFinding(params: {
@@ -164,13 +209,7 @@ export class RegexRuleService {
     endCol: number;
   }): Finding {
     const message = 'Possible hardcoded secret detected. Move this value to an environment variable.';
-    const id = this.makeId(
-      params.rule.id,
-      params.filePath,
-      params.startLine,
-      params.startCol,
-      message
-    );
+    const id = this.makeId(params.rule.id, params.filePath, params.startLine, params.startCol, message);
 
     return {
       id,
@@ -192,24 +231,6 @@ export class RegexRuleService {
   private makeId(ruleId: string, filePath: string, startLine: number, startCol: number, message: string): string {
     const base = `${ruleId}|${filePath}|${startLine}|${startCol}|${message}`;
     return createHash('sha1').update(base).digest('hex');
-  }
-
-  private isHighSignalSecret(rawValue: string): boolean {
-    const value = rawValue.trim().toLowerCase();
-
-    if (!value || value.length < 8) {
-      return false;
-    }
-
-    if (PLACEHOLDER_PATTERNS.some((placeholder) => value.includes(placeholder))) {
-      return false;
-    }
-
-    if (/^[x*_-]+$/i.test(value)) {
-      return false;
-    }
-
-    return true;
   }
 
   private toLineColumn(content: string, startOffset: number, matchLength: number): {

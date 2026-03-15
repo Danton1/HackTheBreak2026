@@ -17,6 +17,7 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
   ): vscode.ProviderResult<vscode.CodeAction[]> {
     const secureLensDiagnostics = context.diagnostics.filter((diagnostic) => diagnostic.source === 'SecureLens');
     const actions: vscode.CodeAction[] = [];
+    const seen = new Set<string>();
 
     for (const diagnostic of secureLensDiagnostics) {
       const findingId = this.resolveFindingId(diagnostic);
@@ -30,10 +31,18 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
       }
 
       for (const suggestion of finding.suggestions ?? []) {
-        const action = this.toCodeAction(document, diagnostic, finding, suggestion);
-        if (action) {
-          actions.push(action);
+        const dedupeKey = `${finding.id}|${suggestion.id}|${suggestion.commandId ?? ''}|${suggestion.title}`;
+        if (seen.has(dedupeKey)) {
+          continue;
         }
+
+        const action = this.toCodeAction(document, diagnostic, finding, suggestion);
+        if (!action) {
+          continue;
+        }
+
+        seen.add(dedupeKey);
+        actions.push(action);
       }
     }
 
@@ -107,8 +116,14 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     }
 
     const text = document.getText(diagnostic.range);
-    const envName = this.deriveEnvName(text, finding);
+    const literalValue = this.extractLiteralValue(text);
 
+    // If we cannot safely parse the current literal, skip the quick fix to avoid data loss.
+    if (!literalValue) {
+      return undefined;
+    }
+
+    const envName = this.deriveEnvName(text, finding);
     const fixed = text.replace(/([=:]\s*)(["'`])[^"'`]+(\2)/, `$1process.env.${envName}`);
 
     if (fixed === text) {
@@ -120,7 +135,7 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
 
     const edit = new vscode.WorkspaceEdit();
     edit.replace(document.uri, diagnostic.range, fixed);
-    this.ensureEnvFileContainsVar(edit, document.uri, envName);
+    this.ensureEnvFileContainsVar(edit, document.uri, envName, literalValue);
 
     action.edit = edit;
     action.isPreferred = suggestion.isPreferred ?? false;
@@ -128,7 +143,12 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     return action;
   }
 
-  private ensureEnvFileContainsVar(edit: vscode.WorkspaceEdit, documentUri: vscode.Uri, envName: string): void {
+  private ensureEnvFileContainsVar(
+    edit: vscode.WorkspaceEdit,
+    documentUri: vscode.Uri,
+    envName: string,
+    literalValue: string
+  ): void {
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
     if (!workspaceFolder) {
       return;
@@ -136,10 +156,11 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
 
     const envPath = path.join(workspaceFolder.uri.fsPath, '.env');
     const envUri = vscode.Uri.file(envPath);
+    const envEntry = `${envName}=${this.toEnvValue(literalValue)}\n`;
 
     if (!fs.existsSync(envPath)) {
       edit.createFile(envUri, { ignoreIfExists: true });
-      edit.insert(envUri, new vscode.Position(0, 0), `${envName}=\n`);
+      edit.insert(envUri, new vscode.Position(0, 0), envEntry);
       return;
     }
 
@@ -155,7 +176,28 @@ export class SecureLensCodeActionProvider implements vscode.CodeActionProvider {
     const lastChar = lines[lastLineIndex]?.length ?? 0;
     const prefix = content.endsWith('\n') ? '' : '\n';
 
-    edit.insert(envUri, new vscode.Position(lastLineIndex, lastChar), `${prefix}${envName}=\n`);
+    edit.insert(envUri, new vscode.Position(lastLineIndex, lastChar), `${prefix}${envEntry}`);
+  }
+
+  private extractLiteralValue(text: string): string | undefined {
+    const literalMatch = text.match(/[=:]\s*(["'`])([^"'`]+)\1/);
+    const value = literalMatch?.[2]?.trim();
+
+    if (!value) {
+      return undefined;
+    }
+
+    return value;
+  }
+
+  private toEnvValue(value: string): string {
+    const needsQuotes = /\s|#|"|'/.test(value);
+    if (!needsQuotes) {
+      return value;
+    }
+
+    const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `"${escaped}"`;
   }
 
   private deriveEnvName(text: string, _finding: Finding): string {

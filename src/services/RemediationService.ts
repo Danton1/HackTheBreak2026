@@ -150,7 +150,7 @@ export class RemediationService {
     const merged: RemediationAction[] = [];
 
     for (const item of [...existing, ...incoming]) {
-      const key = item.id || `${item.title}|${item.detail ?? ''}`;
+      const key = `${item.commandId ?? ''}|${item.title}|${item.detail ?? ''}|${item.kind ?? ''}`;
       if (seen.has(key)) {
         continue;
       }
